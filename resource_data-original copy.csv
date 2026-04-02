@@ -1,0 +1,81 @@
+GUI,GPN,Resource Name,Status,Seniority Date,Location,Level,Counsellor Name
+GUI0001,GPN0001,Resource 1,Allocated,2020-12-22,Bengaluru,Director,Counsellor 13
+GUI0002,GPN0002,Resource 2,Notice Period,2015-07-20,New York,Analyst,Counsellor 5
+GUI0003,GPN0003,Resource 3,Bench,2020-02-07,Singapore,Senior Consultant,Counsellor 7
+GUI0004,GPN0004,Resource 4,Bench,2017-02-18,New York,Consultant,Counsellor 1
+GUI0005,GPN0005,Resource 5,Allocated,2023-02-25,New York,Analyst,Counsellor 3
+GUI0006,GPN0006,Resource 6,Allocated,2016-05-17,London,Senior Consultant,Counsellor 2
+GUI0007,GPN0007,Resource 7,Allocated,2021-09-20,Singapore,Director,Counsellor 9
+GUI0008,GPN0008,Resource 8,Pipeline,2019-10-18,Singapore,Senior Consultant,Counsellor 10
+GUI0009,GPN0009,Resource 9,Bench,2017-03-15,London,Director,Counsellor 6
+GUI0010,GPN0010,Resource 10,Bench,2020-11-16,Bengaluru,Consultant,Counsellor 10
+GUI0011,GPN0011,Resource 11,Allocated,2022-06-24,New York,Director,Counsellor 3
+GUI0012,GPN0012,Resource 12,Notice Period,2020-03-10,Sydney,Analyst,Counsellor 8
+GUI0013,GPN0013,Resource 13,Pipeline,2022-08-05,New York,Consultant,Counsellor 14
+GUI0014,GPN0014,Resource 14,Allocated,2019-04-20,New York,Analyst,Counsellor 8
+GUI0015,GPN0015,Resource 15,Allocated,2017-08-18,Bengaluru,Manager,Counsellor 2
+GUI0016,GPN0016,Resource 16,Allocated,2022-04-14,New York,Senior Analyst,Counsellor 6
+GUI0017,GPN0017,Resource 17,Allocated,2019-01-25,London,Director,Counsellor 7
+GUI0018,GPN0018,Resource 18,Allocated,2022-05-14,London,Senior Analyst,Counsellor 2
+GUI0019,GPN0019,Resource 19,Allocated,2017-10-25,Singapore,Senior Analyst,Counsellor 11
+GUI0020,GPN0020,Resource 20,Allocated,2016-05-17,Sydney,Director,Counsellor 10
+GUI0021,GPN0021,Resource 21,Bench,2022-09-15,New York,Consultant,Counsellor 2
+GUI0022,GPN0022,Resource 22,Allocated,2016-02-02,New York,Manager,Counsellor 10
+GUI0023,GPN0023,Resource 23,Allocated,2017-05-20,Bengaluru,Analyst,Counsellor 1
+GUI0024,GPN0024,Resource 24,Allocated,2022-10-13,London,Senior Consultant,Counsellor 8
+GUI0025,GPN0025,Resource 25,Allocated,2016-01-28,Sydney,Analyst,Counsellor 1
+GUI0026,GPN0026,Resource 26,Bench,2015-07-26,Singapore,Senior Consultant,Counsellor 9
+GUI0027,GPN0027,Resource 27,Allocated,2017-11-04,London,Analyst,Counsellor 11
+GUI0028,GPN0028,Resource 28,Allocated,2020-02-25,Singapore,Director,Counsellor 6
+GUI0029,GPN0029,Resource 29,Bench,2023-01-18,Bengaluru,Manager,Counsellor 7
+GUI0030,GPN0030,Resource 30,Allocated,2019-01-24,Bengaluru,Senior Consultant,Counsellor 13
+GUI0031,GPN0031,Resource 31,Bench,2017-05-13,New York,Consultant,Counsellor 10
+GUI0032,GPN0032,Resource 32,Allocated,2022-08-22,Sydney,Analyst,Counsellor 7
+GUI0033,GPN0033,Resource 33,Allocated,2016-07-17,Singapore,Analyst,Counsellor 10
+GUI0034,GPN0034,Resource 34,Notice Period,2017-10-17,London,Senior Consultant,Counsellor 3
+GUI0035,GPN0035,Resource 35,Notice Period,2015-04-06,Bengaluru,Consultant,Counsellor 2
+GUI0036,GPN0036,Resource 36,Pipeline,2020-04-07,New York,Consultant,Counsellor 9
+GUI0037,GPN0037,Resource 37,Allocated,2019-10-24,New York,Director,Counsellor 8
+GUI0038,GPN0038,Resource 38,Allocated,2021-12-07,Singapore,Director,Counsellor 13
+GUI0039,GPN0039,Resource 39,Bench,2021-03-28,Bengaluru,Director,Counsellor 12
+GUI0040,GPN0040,Resource 40,Allocated,2022-08-28,Sydney,Director,Counsellor 10
+GUI0041,GPN0041,Resource 41,Allocated,2019-08-06,Bengaluru,Director,Counsellor 7
+GUI0042,GPN0042,Resource 42,Allocated,2016-06-24,Singapore,Director,Counsellor 9
+GUI0043,GPN0043,Resource 43,Allocated,2017-11-25,Singapore,Manager,Counsellor 4
+GUI0044,GPN0044,Resource 44,Notice Period,2022-01-16,Bengaluru,Consultant,Counsellor 13
+GUI0045,GPN0045,Resource 45,Allocated,2018-03-29,Singapore,Director,Counsellor 4
+GUI0046,GPN0046,Resource 46,Bench,2019-09-19,Bengaluru,Consultant,Counsellor 1
+GUI0047,GPN0047,Resource 47,Allocated,2019-12-25,London,Consultant,Counsellor 8
+GUI0048,GPN0048,Resource 48,Allocated,2022-03-10,Bengaluru,Senior Analyst,Counsellor 14
+GUI0049,GPN0049,Resource 49,Allocated,2022-06-22,Bengaluru,Manager,Counsellor 14
+GUI0050,GPN0050,Resource 50,Allocated,2022-02-17,Singapore,Director,Counsellor 12
+GUI0051,GPN0051,Resource 51,Notice Period,2019-05-17,Singapore,Analyst,Counsellor 3
+GUI0052,GPN0052,Resource 52,Bench,2022-05-17,New York,Senior Consultant,Counsellor 7
+GUI0053,GPN0053,Resource 53,Notice Period,2017-03-06,New York,Analyst,Counsellor 12
+GUI0054,GPN0054,Resource 54,Pipeline,2017-11-17,London,Manager,Counsellor 2
+GUI0055,GPN0055,Resource 55,Bench,2019-07-02,New York,Senior Consultant,Counsellor 2
+GUI0056,GPN0056,Resource 56,Notice Period,2018-09-25,Bengaluru,Manager,Counsellor 7
+GUI0057,GPN0057,Resource 57,Allocated,2020-06-04,Singapore,Consultant,Counsellor 6
+GUI0058,GPN0058,Resource 58,Allocated,2018-09-16,New York,Senior Consultant,Counsellor 3
+GUI0059,GPN0059,Resource 59,Allocated,2019-07-22,New York,Consultant,Counsellor 9
+GUI0060,GPN0060,Resource 60,Allocated,2019-03-10,London,Analyst,Counsellor 10
+GUI0061,GPN0061,Resource 61,Allocated,2020-07-31,London,Analyst,Counsellor 14
+GUI0062,GPN0062,Resource 62,Allocated,2019-02-05,Bengaluru,Senior Consultant,Counsellor 13
+GUI0063,GPN0063,Resource 63,Pipeline,2021-02-15,Singapore,Senior Consultant,Counsellor 6
+GUI0064,GPN0064,Resource 64,Allocated,2018-11-09,London,Director,Counsellor 10
+GUI0065,GPN0065,Resource 65,Allocated,2018-11-01,New York,Manager,Counsellor 10
+GUI0066,GPN0066,Resource 66,Allocated,2018-07-30,Singapore,Director,Counsellor 6
+GUI0067,GPN0067,Resource 67,Allocated,2022-05-04,Singapore,Manager,Counsellor 1
+GUI0068,GPN0068,Resource 68,Pipeline,2022-04-29,New York,Director,Counsellor 4
+GUI0069,GPN0069,Resource 69,Allocated,2017-08-30,London,Consultant,Counsellor 10
+GUI0070,GPN0070,Resource 70,Notice Period,2019-11-04,New York,Senior Consultant,Counsellor 6
+GUI0071,GPN0071,Resource 71,Bench,2018-07-06,Singapore,Analyst,Counsellor 6
+GUI0072,GPN0072,Resource 72,Allocated,2016-12-10,Sydney,Manager,Counsellor 11
+GUI0073,GPN0073,Resource 73,Allocated,2019-01-19,Sydney,Manager,Counsellor 12
+GUI0074,GPN0074,Resource 74,Pipeline,2018-12-05,Bengaluru,Analyst,Counsellor 5
+GUI0075,GPN0075,Resource 75,Bench,2016-10-10,New York,Director,Counsellor 1
+GUI0076,GPN0076,Resource 76,Bench,2015-11-14,New York,Manager,Counsellor 8
+GUI0077,GPN0077,Resource 77,Bench,2018-06-11,Bengaluru,Consultant,Counsellor 5
+GUI0078,GPN0078,Resource 78,Allocated,2016-11-14,Bengaluru,Senior Consultant,Counsellor 12
+GUI0079,GPN0079,Resource 79,Allocated,2016-10-25,Bengaluru,Analyst,Counsellor 12
+GUI0080,GPN0080,Resource 80,Allocated,2020-06-21,Singapore,Senior Consultant,Counsellor 12
