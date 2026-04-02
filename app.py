@@ -197,32 +197,21 @@ if not df.empty:
 st.subheader("📋 Underlying Dataset Matrix & Editor")
 
 # Provide explicit UI Controls
-c_mode, c_search, c_sort, c_order = st.columns([1, 2, 1, 1])
+c_search, c_mode = st.columns([3, 1])
 
+with c_search:
+    search = st.text_input("🔍 Filter rows globally by text value", "")
+    
 with c_mode:
     st.markdown("<br>", unsafe_allow_html=True)
     edit_mode = st.toggle("✏️ Enable Edit Mode", value=False)
-    
-with c_search:
-    search = st.text_input("🔍 Filter rows globally by text value", "")
 
 display_df = df.copy()
 
-with c_sort:
-    sort_opts = ["None"] + list(display_df.columns)
-    sort_choice = st.selectbox("↕️ Sort By", options=sort_opts, disabled=edit_mode)
-
-with c_order:
-    sort_order = st.selectbox("🔃 Order", options=["Ascending ⬆️", "Descending ⬇️"], disabled=edit_mode)
-
 if edit_mode:
-    st.markdown("⚠️ **Edit Mode Active:** You can double-click cells to edit, add records at the bottom, or check the '🗑️ Delete' box to remove rows. *Sorting drop-downs are temporarily disabled during edits to prevent accidental data shifts.*")
+    st.markdown("⚠️ **Edit Mode Active:** You can double-click cells to edit, add records at the bottom, or check the '🗑️ Delete' box to remove rows.")
 else:
-    st.markdown("👁️ **View Mode Active:** Table is safely locked for browsing. Use the sorting dropdowns above to organize data.")
-
-if not edit_mode and sort_choice != "None" and not display_df.empty:
-    is_ascending = (sort_order == "Ascending ⬆️")
-    display_df = display_df.sort_values(by=sort_choice, ascending=is_ascending)
+    st.markdown("👁️ **View Mode Active:** Table is safely locked for browsing.")
 
 # Enforce explicit data types across the entire schema per constraints
 for col in display_df.columns:
