@@ -1,5 +1,5 @@
 GUI,GPN,Resource Name,Status,Seniority Date,Location,Level,Counsellor Name
-1234567.0,Unassigned,Siva,ACTIVE,4/2/2019,Bengaluru,Manager,Dev
-5677899.0,5677899.0,Alfred,ACTIVE,4/2/2020,Pune,Senior 3,Dinesh
-1233411.0,122221,Vaibhav,ACTIVE,04/2/2021,Noida,Senior 3,Venkat
-1233333.0,1221111,Satish,QUIT,04/2/2022,Chennai,Staff 3,Venkat
+123123.0,123213.0,Siva,ACTIVE,2019-04-03,Bengaluru,Manager,Dev
+12312.0,12313.0,Alfred,ACTIVE,2020-04-22,Bengaluru,Senior 3,Dinesh
+1233411.0,122221.0,Vaibhav,ACTIVE,2021-04-02,Noida,Senior 3,Venkat
+1233333.0,1221111.0,Satish,QUIT,2022-04-02,Chennai,Staff 3,Venkat

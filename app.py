@@ -224,10 +224,14 @@ if not edit_mode and sort_choice != "None" and not display_df.empty:
     is_ascending = (sort_order == "Ascending ⬆️")
     display_df = display_df.sort_values(by=sort_choice, ascending=is_ascending)
 
-# Ensure GUI and GPN are treated as strictly numeric natively
-for col in ['GUI', 'GPN']:
-    if col in display_df.columns:
+# Enforce explicit data types across the entire schema per constraints
+for col in display_df.columns:
+    if col in ['GUI', 'GPN']:
         display_df[col] = pd.to_numeric(display_df[col], errors='coerce').fillna(0).astype(int)
+    elif 'Date' in col:
+        display_df[col] = pd.to_datetime(display_df[col], errors='coerce').dt.date
+    else:
+        display_df[col] = display_df[col].astype(str)
 
 if search and not display_df.empty:
     mask = display_df.apply(lambda row: row.astype(str).str.contains(search, case=False, na=False).any(), axis=1)
@@ -236,11 +240,15 @@ if search and not display_df.empty:
 if not display_df.empty or df.empty:
     editor_key = f"editor_{selection}"
     
-    # Build column configurations to restrict GUI and GPN properly
+    # Build explicit UI column configurations locking datatypes natively into Streamlit
     col_config = {}
-    for col in ['GUI', 'GPN']:
-        if col in display_df.columns:
+    for col in display_df.columns:
+        if col in ['GUI', 'GPN']:
             col_config[col] = st.column_config.NumberColumn(col, format="%d", min_value=0, step=1)
+        elif 'Date' in col:
+            col_config[col] = st.column_config.DateColumn(col, format="MM/DD/YYYY")
+        elif col != '🗑️ Delete Row':
+            col_config[col] = st.column_config.TextColumn(col)
             
     if edit_mode:
         if not display_df.empty and '🗑️ Delete Row' not in display_df.columns:
