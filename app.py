@@ -100,8 +100,8 @@ with st.expander(f"➕ Add New Record manually to {file_path}", expanded=False):
             with target:
                 if 'Date' in col_name:
                     input_data[col_name] = st.date_input(f"{col_name} *")
-                elif 'Days' in col_name:
-                    input_data[col_name] = st.number_input(f"{col_name} *", min_value=0, step=1)
+                elif 'Days' in col_name or col_name in ['GUI', 'GPN']:
+                    input_data[col_name] = st.number_input(f"{col_name} *", min_value=0, step=1, format="%d")
                 else:
                     input_data[col_name] = st.text_input(f"{col_name} *")
         
@@ -192,38 +192,132 @@ if not df.empty:
                 st.plotly_chart(fig, use_container_width=True)
 
 # -----------------------------------------------
-# 4. DATATABLE LOGIC BROWSER
+# 4. DATATABLE LOGIC BROWSER & EDITOR
 # -----------------------------------------------
-st.subheader("📋 Underlying Dataset Matrix")
-search = st.text_input("🔍 Filter rows globally by text value", "")
+st.subheader("📋 Underlying Dataset Matrix & Editor")
+
+# Provide explicit UI Controls
+c_mode, c_search, c_sort, c_order = st.columns([1, 2, 1, 1])
+
+with c_mode:
+    st.markdown("<br>", unsafe_allow_html=True)
+    edit_mode = st.toggle("✏️ Enable Edit Mode", value=False)
+    
+with c_search:
+    search = st.text_input("🔍 Filter rows globally by text value", "")
 
 display_df = df.copy()
+
+with c_sort:
+    sort_opts = ["None"] + list(display_df.columns)
+    sort_choice = st.selectbox("↕️ Sort By", options=sort_opts, disabled=edit_mode)
+
+with c_order:
+    sort_order = st.selectbox("🔃 Order", options=["Ascending ⬆️", "Descending ⬇️"], disabled=edit_mode)
+
+if edit_mode:
+    st.markdown("⚠️ **Edit Mode Active:** You can double-click cells to edit, add records at the bottom, or check the '🗑️ Delete' box to remove rows. *Sorting drop-downs are temporarily disabled during edits to prevent accidental data shifts.*")
+else:
+    st.markdown("👁️ **View Mode Active:** Table is safely locked for browsing. Use the sorting dropdowns above to organize data.")
+
+if not edit_mode and sort_choice != "None" and not display_df.empty:
+    is_ascending = (sort_order == "Ascending ⬆️")
+    display_df = display_df.sort_values(by=sort_choice, ascending=is_ascending)
+
+# Ensure GUI and GPN are treated as strictly numeric natively
+for col in ['GUI', 'GPN']:
+    if col in display_df.columns:
+        display_df[col] = pd.to_numeric(display_df[col], errors='coerce').fillna(0).astype(int)
+
 if search and not display_df.empty:
-    # Blanket cast search vector cross table string interpolation 
     mask = display_df.apply(lambda row: row.astype(str).str.contains(search, case=False, na=False).any(), axis=1)
     display_df = display_df[mask]
 
-# Stylize specific conditional warnings dynamically identifying risks
-def style_risk_factors(val):
-    if isinstance(val, str) and (val.lower() == 'bench' or val.lower() == 'invalid'):
-        return 'color: #dc3545; font-weight: bold;'
-    elif isinstance(val, str) and (val.lower() == 'active' or val.lower() == 'fulfilled' or val.lower() == 'allocated'):
-        return 'color: #28a745; font-weight: bold;'
-    return ''
-
-if not display_df.empty:
-    if hasattr(display_df.style, 'map'):
-        styled_df = display_df.style.map(style_risk_factors)
+if not display_df.empty or df.empty:
+    editor_key = f"editor_{selection}"
+    
+    # Build column configurations to restrict GUI and GPN properly
+    col_config = {}
+    for col in ['GUI', 'GPN']:
+        if col in display_df.columns:
+            col_config[col] = st.column_config.NumberColumn(col, format="%d", min_value=0, step=1)
+            
+    if edit_mode:
+        if not display_df.empty and '🗑️ Delete Row' not in display_df.columns:
+            display_df.insert(0, '🗑️ Delete Row', False)
+            
+        st.data_editor(
+            display_df, 
+            use_container_width=True, 
+            height=350,
+            num_rows="dynamic",
+            hide_index=True,
+            key=editor_key,
+            column_config=col_config
+        )
     else:
-        styled_df = display_df.style.applymap(style_risk_factors)
-        
-    st.dataframe(styled_df, use_container_width=True, height=350)
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            height=350,
+            hide_index=True,
+            column_config=col_config
+        )
+    
+    editor_state = st.session_state.get(editor_key, {})
+    has_changes = any(len(v) > 0 for v in editor_state.values() if isinstance(v, dict) or isinstance(v, list))
+    
+    if has_changes:
+        st.warning("⚠️ You have pending changes in the table above.")
+        if st.button("💾 Save Table Edits to CSV", use_container_width=True):
+            explicit_deletes = []
+            
+            # 1. Updates & Explicit Deletions
+            for idx_pos, changes in editor_state.get("edited_rows", {}).items():
+                true_idx = display_df.index[idx_pos]
+                
+                # If they clicked the Delete checkbox
+                if changes.get('🗑️ Delete Row', False) is True:
+                    explicit_deletes.append(true_idx)
+                else:
+                    for col, val in changes.items():
+                        if col != '🗑️ Delete Row':
+                            df.at[true_idx, col] = val
+                            
+            # 2. Native Deletions (if they still hit Backspace/Delete)
+            deleted_indices = editor_state.get("deleted_rows", [])
+            if deleted_indices:
+                native_deleted = [display_df.index[i] for i in deleted_indices]
+                explicit_deletes.extend(native_deleted)
+                
+            # Process all deletions
+            if explicit_deletes:
+                df = df.drop(index=list(set(explicit_deletes)))
+                
+            # 3. Additions
+            added_rows = editor_state.get("added_rows", [])
+            if added_rows:
+                new_df = pd.DataFrame(added_rows)
+                if '🗑️ Delete Row' in new_df.columns:
+                    new_df = new_df.drop(columns=['🗑️ Delete Row'])
+                for c in df.columns:
+                    if c not in new_df.columns:
+                        new_df[c] = None
+                df = pd.concat([df, new_df[df.columns]], ignore_index=True)
+                
+            # Strict format adherence ensuring dynamic UI tracking columns never slip into the raw storage
+            df_to_save = df[[c for c in expected_cols if c in df.columns]]
+            df_to_save.to_csv(file_path, index=False)
+            st.success("Successfully synchronized changes to CSV!")
+            load_data.clear()
+            st.rerun()
 else:
     st.info("No matching records found. Or the sheet itself is empty.")
 
 # Output exporter component.
 if not df.empty:
-    csv_export = display_df.to_csv(index=False).encode('utf-8')
+    export_df = display_df.drop(columns=['🗑️ Delete Row'], errors='ignore')
+    csv_export = export_df.to_csv(index=False).encode('utf-8')
     st.download_button(
         label=f"📥 Download Current Filtered {selection} Schema as CSV",
         data=csv_export,
