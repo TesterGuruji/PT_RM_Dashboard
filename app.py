@@ -263,62 +263,140 @@ st.markdown("*******")
 # 2. OVERVIEW METRICS / KPIS
 # -----------------------------------------------
 st.subheader("📊 Key Performance Operations")
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Total Extracted Records", len(df))
 
-if not df.empty:
-    if 'Status' in df.columns:
-        # Prevent tracking issues mapping values if unassigned
-        cleaned_status = df[df['Status'] != 'Unassigned']['Status']
-        if not cleaned_status.empty:
-            unique_statuses = cleaned_status.value_counts()
-            if len(unique_statuses) > 0:
-                m2.metric(f"Top Tag: {unique_statuses.index[0]}", unique_statuses.iloc[0])
-            if len(unique_statuses) > 1:
-                m3.metric(f"Runner-up Tag: {unique_statuses.index[1]}", unique_statuses.iloc[1])
-                
-    if 'Bench Days' in df.columns:
-        avg_bench = pd.to_numeric(df['Bench Days'], errors='coerce').mean()
-        m4.metric("Average Bench Duration", f"{avg_bench:.1f} Days" if pd.notna(avg_bench) else "N/A", delta_color="inverse")
-    elif 'Sector' in df.columns:
-        sectors = df['Sector'].nunique()
-        m4.metric("Unique Client Sectors", sectors)
+if "Performance Testing Members" in selection:
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Members", len(df))
+    if not df.empty:
+        if 'Status' in df.columns:
+            active_count = len(df[df['Status'].astype(str).str.upper() == 'ACTIVE'])
+            m2.metric("Active Members", active_count)
+        if 'Location' in df.columns:
+            locations = df[df['Location'] != 'Unassigned']['Location'].nunique()
+            m3.metric("Unique Locations", locations)
+        if 'Level' in df.columns:
+            levels = df[df['Level'] != 'Unassigned']['Level'].nunique()
+            m4.metric("Role Levels", levels)
+else:
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Extracted Records", len(df))
+
+    if not df.empty:
+        if 'Status' in df.columns:
+            # Prevent tracking issues mapping values if unassigned
+            cleaned_status = df[df['Status'] != 'Unassigned']['Status']
+            if not cleaned_status.empty:
+                unique_statuses = cleaned_status.value_counts()
+                if len(unique_statuses) > 0:
+                    m2.metric(f"Top Tag: {unique_statuses.index[0]}", unique_statuses.iloc[0])
+                if len(unique_statuses) > 1:
+                    m3.metric(f"Runner-up Tag: {unique_statuses.index[1]}", unique_statuses.iloc[1])
+                    
+        if 'Bench Days' in df.columns:
+            avg_bench = pd.to_numeric(df['Bench Days'], errors='coerce').mean()
+            m4.metric("Average Bench Duration", f"{avg_bench:.1f} Days" if pd.notna(avg_bench) else "N/A", delta_color="inverse")
+        elif 'Sector' in df.columns:
+            sectors = df['Sector'].nunique()
+            m4.metric("Unique Client Sectors", sectors)
 
 # -----------------------------------------------
 # 3. INTERACTIVE VISUALIZATIONS
 # -----------------------------------------------
 st.subheader("📈 Functional Intelligence")
 if not df.empty:
-    vc1, vc2 = st.columns(2)
-    chart_idx = 0
-    
-    # Priority schema plot targets mapped safely. Iterates plotting if available in respective csv.
-    plot_columns = [col for col in ['Status', 'Location', 'Level', 'Resource Level', 'Sector', 'Client'] if col in df.columns]
-    
-    for plot_col in plot_columns:
-        target_col = vc1 if chart_idx % 2 == 0 else vc2
-        with target_col:
-            # We enforce excluding purely missing elements mapped inherently as Unassigned to not skew charting
-            plot_df = df[df[plot_col] != 'Unassigned']
-            if not plot_df.empty:
-                data_vis = plot_df[plot_col].value_counts().reset_index()
-                data_vis.columns = [plot_col, 'Volume']
+    if "Performance Testing Members" in selection:
+        st.markdown("### Resource Distribution Overview")
+        
+        # 1) Allocation by status pie chart & 2) Number of Resources distribution across location graph
+        col1, col2 = st.columns(2)
+        with col1:
+            if 'Status' in df.columns:
+                status_counts = df[df['Status'] != 'Unassigned']['Status'].value_counts().reset_index()
+                status_counts.columns = ['Status', 'Count']
+                fig_status = px.pie(status_counts, names='Status', values='Count', hole=0.4, title="1. Allocation by Status")
+                st.plotly_chart(fig_status, use_container_width=True)
                 
-                # Pie for constrained groups, bar for scattered vectors visually mappings.
-                if len(data_vis) <= 6:
-                    fig = px.pie(data_vis, names=plot_col, values='Volume', hole=0.35, title=f"Allocation by {plot_col}")
-                else:
-                    fig = px.bar(data_vis, x=plot_col, y='Volume', color='Volume', title=f"Volume mapped per {plot_col}")
+        with col2:
+            if 'Location' in df.columns:
+                loc_counts = df[df['Location'] != 'Unassigned']['Location'].value_counts().reset_index()
+                loc_counts.columns = ['Location', 'Count']
+                fig_loc = px.bar(loc_counts, x='Location', y='Count', title="2. Resources Distribution Across Location", color='Location')
+                st.plotly_chart(fig_loc, use_container_width=True)
                 
-                st.plotly_chart(fig, use_container_width=True)
-            chart_idx += 1
-            
-    # Conditional histogram specifically targeting bench timeframe risk.
-    if 'Bench Days' in df.columns:
-        numeric_bench = pd.to_numeric(df['Bench Days'], errors='coerce').dropna()
-        if not numeric_bench.empty:
+        # 3) Number of resources distribution across level graph & 4) Location vs Level wise graph
+        col3, col4 = st.columns(2)
+        with col3:
+            if 'Level' in df.columns:
+                level_counts = df[df['Level'] != 'Unassigned']['Level'].value_counts().reset_index()
+                level_counts.columns = ['Level', 'Count']
+                fig_level = px.bar(level_counts, x='Level', y='Count', title="3. Resources Distribution Across Level", color='Level')
+                st.plotly_chart(fig_level, use_container_width=True)
+                
+        with col4:
+            if 'Location' in df.columns and 'Level' in df.columns:
+                loc_level_df = df[(df['Location'] != 'Unassigned') & (df['Level'] != 'Unassigned')]
+                loc_level_counts = loc_level_df.groupby(['Location', 'Level']).size().reset_index(name='Count')
+                fig_loc_level = px.bar(loc_level_counts, x='Location', y='Count', color='Level', barmode='group', title="4. Location vs Level Wise Distribution")
+                st.plotly_chart(fig_loc_level, use_container_width=True)
+                
+        # 5) Seniority date vs Resource Name graph
+        if 'Seniority Date' in df.columns and 'Resource Name' in df.columns:
+            sen_df = df[(df['Seniority Date'] != 'Unassigned') & (df['Resource Name'] != 'Unassigned')].copy()
+            sen_df['Seniority Date'] = pd.to_datetime(sen_df['Seniority Date'], errors='coerce')
+            sen_df = sen_df.dropna(subset=['Seniority Date'])
+            if not sen_df.empty:
+                # Sort by date for a solid chronological order on the plot
+                sen_df = sen_df.sort_values(by='Seniority Date')
+                
+                # Only show top 10 most senior (distinct) resources
+                sen_df = sen_df.drop_duplicates(subset=['Resource Name']).head(10)
+                
+                hover_cols = [c for c in ['Location', 'Level', 'Status'] if c in sen_df.columns]
+                fig_sen = px.scatter(
+                    sen_df, 
+                    x='Seniority Date', 
+                    y='Resource Name', 
+                    color='Level' if 'Level' in sen_df.columns else None,
+                    title="5. Top 10 Most Senior Resources (Seniority Date vs Name)",
+                    hover_data=hover_cols if hover_cols else None
+                )
+                fig_sen.update_traces(marker=dict(size=12, line=dict(width=1, color='DarkSlateGrey')))
+                
+                # Ensure the display logic adheres chronologically instead of alphabetically natively via layout overrides 
+                fig_sen.update_layout(yaxis={'categoryorder': 'array', 'categoryarray': sen_df['Resource Name'].tolist()})
+                st.plotly_chart(fig_sen, use_container_width=True)
+
+    else:
+        vc1, vc2 = st.columns(2)
+        chart_idx = 0
+        
+        # Priority schema plot targets mapped safely. Iterates plotting if available in respective csv.
+        plot_columns = [col for col in ['Status', 'Location', 'Level', 'Resource Level', 'Sector', 'Client'] if col in df.columns]
+        
+        for plot_col in plot_columns:
             target_col = vc1 if chart_idx % 2 == 0 else vc2
             with target_col:
-                fig = px.histogram(numeric_bench, x=numeric_bench, nbins=15, title="Bench Duration Tally", color_discrete_sequence=['#ff6b6b'])
-                fig.update_layout(xaxis_title="Days on Bench", yaxis_title="Resource Count")
-                st.plotly_chart(fig, use_container_width=True)
+                # We enforce excluding purely missing elements mapped inherently as Unassigned to not skew charting
+                plot_df = df[df[plot_col] != 'Unassigned']
+                if not plot_df.empty:
+                    data_vis = plot_df[plot_col].value_counts().reset_index()
+                    data_vis.columns = [plot_col, 'Volume']
+                    
+                    # Pie for constrained groups, bar for scattered vectors visually mappings.
+                    if len(data_vis) <= 6:
+                        fig = px.pie(data_vis, names=plot_col, values='Volume', hole=0.35, title=f"Allocation by {plot_col}")
+                    else:
+                        fig = px.bar(data_vis, x=plot_col, y='Volume', color='Volume', title=f"Volume mapped per {plot_col}")
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                chart_idx += 1
+                
+        # Conditional histogram specifically targeting bench timeframe risk.
+        if 'Bench Days' in df.columns:
+            numeric_bench = pd.to_numeric(df['Bench Days'], errors='coerce').dropna()
+            if not numeric_bench.empty:
+                target_col = vc1 if chart_idx % 2 == 0 else vc2
+                with target_col:
+                    fig = px.histogram(numeric_bench, x=numeric_bench, nbins=15, title="Bench Duration Tally", color_discrete_sequence=['#ff6b6b'])
+                    fig.update_layout(xaxis_title="Days on Bench", yaxis_title="Resource Count")
+                    st.plotly_chart(fig, use_container_width=True)
