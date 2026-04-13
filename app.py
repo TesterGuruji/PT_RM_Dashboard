@@ -42,7 +42,7 @@ FILES = {
     "Pipeline Demands": {
         "path": "PipelineDemand_Details.csv",
         "description": "Upcoming pipeline demands, fulfilled, and invalid requests.",
-        "cols": ["Role ID", "Eng ID", "Eng Name", "Sector", "Client", "Start Date", "Resource Level", "Comments", "Status"]
+        "cols": ["Role ID", "Eng ID", "Eng Name", "Sector", "Sector PT lead", "Client", "Start Date", "Resource Level", "Comments", "Status"]
     }
 }
 
@@ -262,7 +262,7 @@ st.markdown("*******")
 # -----------------------------------------------
 # 2. OVERVIEW METRICS / KPIS
 # -----------------------------------------------
-st.subheader("📊 Key Performance Operations")
+st.subheader("📊 Key Metrics")
 
 if "Performance Testing Members" in selection:
     m1, m2, m3, m4 = st.columns(4)
@@ -277,6 +277,20 @@ if "Performance Testing Members" in selection:
         if 'Level' in df.columns:
             levels = df[df['Level'] != 'Unassigned']['Level'].nunique()
             m4.metric("Role Levels", levels)
+
+if "Pipeline Demands" in selection:
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Demands", len(df))
+    if not df.empty:
+        if 'Status' in df.columns:
+            active_count = len(df[df['Status'].astype(str).str.upper() == 'OPEN'])
+            m2.metric("Open Demands", active_count)
+        if 'Status' in df.columns:
+            awaiting_count = len(df[df['Status'].astype(str).str.upper() == 'AWAITING CONFIRMATION'])
+            m3.metric("Awaiting Confirmation", awaiting_count)
+        if 'Status' in df.columns:
+            invalid_count = len(df[df['Status'].astype(str).str.upper() == 'INVALID'])
+            m4.metric("Invalid Demands", invalid_count)
 else:
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Total Extracted Records", len(df))
@@ -302,7 +316,7 @@ else:
 # -----------------------------------------------
 # 3. INTERACTIVE VISUALIZATIONS
 # -----------------------------------------------
-st.subheader("📈 Functional Intelligence")
+#st.subheader("📈 Functional Intelligence")
 if not df.empty:
     if "Performance Testing Members" in selection:
         st.markdown("### Resource Distribution Overview")
@@ -365,6 +379,34 @@ if not df.empty:
                 # Ensure the display logic adheres chronologically instead of alphabetically natively via layout overrides 
                 fig_sen.update_layout(yaxis={'categoryorder': 'array', 'categoryarray': sen_df['Resource Name'].tolist()})
                 st.plotly_chart(fig_sen, use_container_width=True)
+
+    elif "Pipeline Demands" in selection:
+        st.markdown("### Pipeline Demand Graphs")
+        col1, col2 = st.columns(2)
+        
+        #with col1:
+        if 'Status' in df.columns:
+            status_counts = df[df['Status'] != 'Unassigned']['Status'].value_counts().reset_index()
+            status_counts.columns = ['Status', 'Count']
+            fig_status = px.pie(status_counts, names='Status', values='Count', hole=0.4, title="1. Status Wise Allocation")
+            st.plotly_chart(fig_status, use_container_width=True)
+        #with col2:
+        if 'Start Date' in df.columns and 'Resource Level' in df.columns:
+            plot_df = df[(df['Start Date'] != 'Unassigned') & (df['Resource Level'] != 'Unassigned')].copy()
+            plot_df['Start Date'] = pd.to_datetime(plot_df['Start Date'], errors='coerce')
+            plot_df = plot_df.dropna(subset=['Start Date'])
+            
+            if not plot_df.empty:
+                plot_df['Month'] = plot_df['Start Date'].dt.strftime('%b %Y')
+                plot_df['Month_Sort'] = plot_df['Start Date'].dt.to_period('M')
+                
+                time_counts = plot_df.groupby(['Month', 'Month_Sort', 'Resource Level']).size().reset_index(name='Demand Count')
+                time_counts = time_counts.sort_values('Month_Sort')
+                
+                fig_time = px.bar(time_counts, x='Month', y='Demand Count', color='Resource Level', barmode='group', title="2. Month Wise Demand Count by Resource Level")
+                # Ensure chronological sorting on x-axis
+                fig_time.update_xaxes(categoryorder='array', categoryarray=time_counts['Month'].unique())
+                st.plotly_chart(fig_time, use_container_width=True)
 
     else:
         vc1, vc2 = st.columns(2)
