@@ -179,8 +179,37 @@ if not display_df.empty or df.empty:
         if not display_df.empty and '🗑️ Delete Row' not in display_df.columns:
             display_df.insert(0, '🗑️ Delete Row', False)
             
+    # Apply styling for Pipeline Demands
+    styled_df = display_df
+    if "Pipeline Demands" in selection and 'Status' in display_df.columns:
+        def highlight_status(row):
+            styles = [''] * len(row)
+            if pd.notna(row.get('Status')):
+                val = str(row['Status']).strip().upper()
+                bg_color = ''
+                text_color = ''
+                if val == 'FULFILLED':
+                    bg_color = '#28a745'
+                    text_color = 'white'
+                elif val == 'INVALID':
+                    bg_color = '#dc3545'
+                    text_color = 'white'
+                elif val == 'AWAITING CONFIRMATION':
+                    bg_color = '#ffc107'
+                    text_color = 'black'
+                elif val == 'OPEN':
+                    bg_color = '#007bff'
+                    text_color = 'white'
+                
+                if bg_color:
+                    status_idx = row.index.get_loc('Status')
+                    styles[status_idx] = f'background-color: {bg_color}; color: {text_color}'
+            return styles
+        styled_df = display_df.style.apply(highlight_status, axis=1)
+
+    if edit_mode:
         st.data_editor(
-            display_df, 
+            styled_df, 
             use_container_width=True, 
             height=350,
             num_rows="dynamic",
@@ -190,7 +219,7 @@ if not display_df.empty or df.empty:
         )
     else:
         st.dataframe(
-            display_df,
+            styled_df,
             use_container_width=True,
             height=350,
             hide_index=True,
@@ -289,8 +318,8 @@ if "Pipeline Demands" in selection:
             awaiting_count = len(df[df['Status'].astype(str).str.upper() == 'AWAITING CONFIRMATION'])
             m3.metric("Awaiting Confirmation", awaiting_count)
         if 'Status' in df.columns:
-            invalid_count = len(df[df['Status'].astype(str).str.upper() == 'INVALID'])
-            m4.metric("Invalid Demands", invalid_count)
+            fulfilled_count = len(df[df['Status'].astype(str).str.upper() == 'FULFILLED'])
+            m4.metric("Fulfilled Demands", fulfilled_count)
 else:
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Total Extracted Records", len(df))
@@ -386,13 +415,31 @@ if not df.empty:
         
         #with col1:
         if 'Status' in df.columns:
-            status_counts = df[df['Status'] != 'Unassigned']['Status'].value_counts().reset_index()
+            plot_status = df[df['Status'] != 'Unassigned'].copy()
+            plot_status['Status'] = plot_status['Status'].astype(str).str.title()
+            status_counts = plot_status['Status'].value_counts().reset_index()
             status_counts.columns = ['Status', 'Count']
-            fig_status = px.pie(status_counts, names='Status', values='Count', hole=0.4, title="1. Status Wise Allocation")
+            
+            color_map = {
+                "Fulfilled": "green",
+                "Invalid": "red",
+                "Awaiting Confirmation": "yellow",
+                "Open": "blue"
+            }
+            
+            fig_status = px.pie(
+                status_counts, 
+                names='Status', 
+                values='Count', 
+                hole=0.4, 
+                title="1. Status Wise Allocation",
+                color='Status',
+                color_discrete_map=color_map
+            )
             st.plotly_chart(fig_status, use_container_width=True)
         #with col2:
         if 'Start Date' in df.columns and 'Resource Level' in df.columns:
-            plot_df = df[(df['Start Date'] != 'Unassigned') & (df['Resource Level'] != 'Unassigned')].copy()
+            plot_df = df[(df['Start Date'] != 'Unassigned') & (df['Resource Level'] != 'Unassigned') & (df['Status'].str.lower() == 'open')].copy()
             plot_df['Start Date'] = pd.to_datetime(plot_df['Start Date'], errors='coerce')
             plot_df = plot_df.dropna(subset=['Start Date'])
             
