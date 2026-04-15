@@ -24,21 +24,21 @@ st.markdown("""
 # CONFIGURATION & SCHEMA MAPPING
 # -----------------------------------
 FILES = {
-    "Performance Testing Members 👥": {
-        "path": "GDS_PTMembers.csv",
-        "description": "Overall PT members including ACTIVE & QUIT statuses.",
-        "cols": ["GUI", "GPN", "Resource Name", "Status", "Seniority Date", "Location", "Level", "Counsellor Name"]
-    },
-    "Soon To Bench": {
-        "path": "DST_SoonTobench.csv",
-        "description": "Resources projected to roll off current engagements soon.",
-        "cols": ["GUI", "GPN", "Resource Name", "Status", "Seniority Date", "Location", "Level", "Counsellor Name"]
-    },
-    "On Bench": {
-        "path": "DST_Bench.csv",
-        "description": "Resources currently actively on bench awaiting deployment.",
-        "cols": ["GPN", "Name", "Resource Level", "Status", "Bench Days", "Last Project Release Date", "Last Project Name", "Additional Comments", "Location", "Cousellor Name"]
-    },
+    # "Performance Testing Members 👥": {
+    #     "path": "GDS_PTMembers.csv",
+    #     "description": "Overall PT members including ACTIVE & QUIT statuses.",
+    #     "cols": ["GUI", "GPN", "Resource Name", "Status", "Seniority Date", "Location", "Level", "Counsellor Name"]
+    # },
+    # "Soon To Bench": {
+    #     "path": "DST_SoonTobench.csv",
+    #     "description": "Resources projected to roll off current engagements soon.",
+    #     "cols": ["GUI", "GPN", "Resource Name", "Status", "Seniority Date", "Location", "Level", "Counsellor Name"]
+    # },
+    # "On Bench": {
+    #     "path": "DST_Bench.csv",
+    #     "description": "Resources currently actively on bench awaiting deployment.",
+    #     "cols": ["GPN", "Name", "Resource Level", "Status", "Bench Days", "Last Project Release Date", "Last Project Name", "Additional Comments", "Location", "Cousellor Name"]
+    # },
     "Pipeline Demands": {
         "path": "PipelineDemand_Details.csv",
         "description": "Upcoming pipeline demands, fulfilled, and invalid requests.",
@@ -312,17 +312,35 @@ if "Performance Testing Members" in selection:
 
 if "Pipeline Demands" in selection:
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total Demands", len(df))
-    if not df.empty:
-        if 'Status' in df.columns:
-            active_count = len(df[df['Status'].astype(str).str.upper() == 'OPEN'])
-            m2.metric("Open Demands", active_count)
-        if 'Status' in df.columns:
-            awaiting_count = len(df[df['Status'].astype(str).str.upper() == 'AWAITING CONFIRMATION'])
-            m3.metric("Awaiting Confirmation", awaiting_count)
-        if 'Status' in df.columns:
-            fulfilled_count = len(df[df['Status'].astype(str).str.upper() == 'FULFILLED'])
-            m4.metric("Fulfilled Demands", fulfilled_count)
+    
+    if not df.empty and 'Status' in df.columns and 'Start Date' in df.columns:
+        # Prepare date parsing for Current Month metrics
+        df_dates = df.copy()
+        df_dates['Start Date'] = pd.to_datetime(df_dates['Start Date'], errors='coerce')
+        
+        now = datetime.now()
+        current_month_mask = (df_dates['Start Date'].dt.month == now.month) & (df_dates['Start Date'].dt.year == now.year)
+        
+        # 1. Open Demand (Current Month)
+        open_current_month = len(df_dates[current_month_mask & (df_dates['Status'].astype(str).str.upper() == 'OPEN')])
+        m1.metric("Open Demands (Current Month)", open_current_month)
+        
+        # 2. Overall Open Demand
+        overall_open = len(df[df['Status'].astype(str).str.upper() == 'OPEN'])
+        m2.metric("Overall Open Demands", overall_open)
+        
+        # 3. Fulfilled (Current Month)
+        fulfilled_current_month = len(df_dates[current_month_mask & (df_dates['Status'].astype(str).str.upper() == 'FULFILLED')])
+        m3.metric("Fulfilled (Current Month)", fulfilled_current_month)
+        
+        # 4. Awaiting Confirmation Demand
+        overall_fulfilled = len(df[df['Status'].astype(str).str.upper() == 'AWAITING CONFIRMATION'])
+        m4.metric("Awaiting Confirmation", overall_fulfilled)
+    else:
+        m1.metric("Open Demands (Current Month)", 0)
+        m2.metric("Overall Open Demands", 0)
+        m3.metric("Fulfilled (Current Month)", 0)
+        m4.metric("Overall Fulfilled", 0)
 else:
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Total Extracted Records", len(df))
