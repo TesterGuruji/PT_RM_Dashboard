@@ -244,6 +244,9 @@ if not display_df.empty or df.empty:
                 else:
                     for col, val in changes.items():
                         if col != '🗑️ Delete Row':
+                            # Prevent Strict Upcast Error by making column object type before setting value
+                            if df[col].dtype != 'object':
+                                df[col] = df[col].astype('object')
                             df.at[true_idx, col] = val
                             
             # 2. Native Deletions (if they still hit Backspace/Delete)

@@ -1,4 +1,4 @@
-GPN,Name,Eng Name,Client Name,End Date,Resource Level,Additional Comments,Location,Counsellor
-12423412,Vaibhav,ABCD,ABCD,12/1/2026,Staff 1,Allocation extended,Noida,Venkat
-1234567,Siva,XYZ,XYZ,12/17/2026,Manager,Profinda need to update,Bengaluru,Dev
-5677899,Alfred,PQRST,PQRST,10/1/2026,Senior 3,Confirmation recieved,Pune,Dinesh
+GPN,Location
+12423412,Noida
+9987,Bengaluru
+5677899,Pune
