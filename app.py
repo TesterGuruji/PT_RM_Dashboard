@@ -587,7 +587,7 @@ if not raw_df.empty:
                     font=dict(family="Plus Jakarta Sans, Inter", size=14, color="#0F172A")
                 ),
                 margin=dict(l=10, r=10, t=40, b=10),
-                height=260,
+                height=360,
                 showlegend=True,
                 legend=dict(
                     orientation="h",
@@ -603,55 +603,79 @@ if not raw_df.empty:
             
             st.plotly_chart(fig_status, use_container_width=True)
 
-    # Chart 2: Open Demand by Resource Level
+    # Chart 2: Month-wise Open Demand by Resource Level
     with chart_col2:
-        if 'Resource Level' in raw_df.columns and 'Status' in raw_df.columns:
-            open_level_df = raw_df[
+        if 'Start Date' in raw_df.columns and 'Resource Level' in raw_df.columns and 'Status' in raw_df.columns:
+            plot_df = raw_df[
+                (raw_df['Start Date'] != 'Unassigned') & 
                 (raw_df['Resource Level'] != 'Unassigned') & 
                 (raw_df['Status'].astype(str).str.strip().str.upper() == 'OPEN')
             ].copy()
+            plot_df['Start Date'] = pd.to_datetime(plot_df['Start Date'], errors='coerce')
+            plot_df = plot_df.dropna(subset=['Start Date'])
             
-            if not open_level_df.empty:
-                level_counts = open_level_df['Resource Level'].value_counts().reset_index()
-                level_counts.columns = ['Resource Level', 'Open Demands']
-                level_counts = level_counts.sort_values(by='Open Demands', ascending=True)
+            if not plot_df.empty:
+                plot_df['Month'] = plot_df['Start Date'].dt.strftime('%b %Y')
+                plot_df['Month_Sort'] = plot_df['Start Date'].dt.to_period('M')
+                
+                time_counts = plot_df.groupby(['Month', 'Month_Sort', 'Resource Level']).size().reset_index(name='Open Demands')
+                time_counts = time_counts.sort_values('Month_Sort')
+                
+                level_color_palette = ['#2563EB', '#0EA5E9', '#6366F1', '#8B5CF6', '#F59E0B', '#10B981']
                 
                 fig_level = px.bar(
-                    level_counts,
-                    x='Open Demands',
-                    y='Resource Level',
-                    orientation='h',
+                    time_counts,
+                    x='Month',
+                    y='Open Demands',
+                    color='Resource Level',
+                    barmode='group',
                     text='Open Demands',
-                    color_discrete_sequence=['#2563EB']
+                    color_discrete_sequence=level_color_palette
                 )
                 
                 fig_level.update_traces(
                     textposition='outside',
-                    hovertemplate="<b>%{y}</b><br>Open Demands: %{x}<extra></extra>",
-                    marker=dict(line=dict(color='#1D4ED8', width=1))
+                    hovertemplate="<b>%{x}</b><br>Level: %{fullData.name}<br>Open Demands: %{y}<extra></extra>",
+                    marker=dict(line=dict(color='#FFFFFF', width=1))
                 )
+                
+                chronological_months = list(dict.fromkeys(time_counts['Month'].tolist()))
                 
                 fig_level.update_layout(
                     title=dict(
-                        text="<b>Open Demands by Resource Level</b>",
+                        text="<b>Month Wise Open Demand Count by Resource Level</b>",
                         font=dict(family="Plus Jakarta Sans, Inter", size=14, color="#0F172A")
                     ),
                     xaxis=dict(
+                        title="",
+                        categoryorder='array',
+                        categoryarray=chronological_months,
+                        showgrid=False
+                    ),
+                    yaxis=dict(
                         title="",
                         showgrid=True,
                         gridcolor="#F1F5F9",
                         dtick=1
                     ),
-                    yaxis=dict(title=""),
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=-0.25,
+                        xanchor="center",
+                        x=0.5,
+                        title=dict(text=""),
+                        font=dict(size=11)
+                    ),
                     margin=dict(l=10, r=20, t=40, b=10),
-                    height=260,
+                    height=360,
                     paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0)"
                 )
                 
                 st.plotly_chart(fig_level, use_container_width=True)
             else:
-                st.info("No open demands found to chart by resource level.")
+                st.info("No open demands found to chart by start month.")
 
 st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
 
@@ -662,7 +686,7 @@ st.markdown("### 📋 Pipeline Demand Details")
 
 # Filter Controls Card
 with st.container():
-    st.markdown('<div class="filter-toolbar">', unsafe_allow_html=True)
+    #st.markdown('<div class="filter-toolbar">', unsafe_allow_html=True)
     
     f_c1, f_c2, f_c3, f_c4 = st.columns([2, 1.2, 1.2, 1.2])
     
