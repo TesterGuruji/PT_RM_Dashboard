@@ -3,6 +3,10 @@ import pandas as pd
 import plotly.express as px
 import os
 from datetime import datetime
+from dotenv import load_dotenv
+from ai_assistant.assistant import PipelineAIAssistant
+
+load_dotenv()
 
 st.set_page_config(page_title="Resource Portfolio Master Dashboard", page_icon="📈", layout="wide")
 
@@ -510,3 +514,67 @@ if not df.empty:
                     fig = px.histogram(numeric_bench, x=numeric_bench, nbins=15, title="Bench Duration Tally", color_discrete_sequence=['#ff6b6b'])
                     fig.update_layout(xaxis_title="Days on Bench", yaxis_title="Resource Count")
                     st.plotly_chart(fig, use_container_width=True)
+
+# -----------------------------------------------
+# 🤖 PIPELINE DEMAND AI ASSISTANT SECTION
+# -----------------------------------------------
+st.markdown("---")
+st.subheader("🤖 Pipeline Demand AI Assistant")
+st.caption("Ask natural-language questions about pipeline demand data. Grounded strictly in `PipelineDemand_Details.csv`.")
+
+# Check contextual filtering
+if 'search' in locals() and search and not display_df.empty:
+    st.info(f"🤖 **AI Assistant is using the current dashboard filter** (`'{search}'` — {len(display_df)} matching rows).")
+    working_df = display_df.drop(columns=['🗑️ Delete Row'], errors='ignore')
+else:
+    st.info("🤖 **AI Assistant is using the complete PipelineDemand_Details.csv dataset**.")
+    working_df = df.copy()
+
+# Initialize AI Assistant instance
+ai_assistant = PipelineAIAssistant(df=working_df)
+
+# Session state initialization for conversation history
+if "ai_chat_history" not in st.session_state:
+    st.session_state.ai_chat_history = []
+
+# Suggested questions section
+with st.expander("💡 **Suggested Questions** (Click to ask)", expanded=len(st.session_state.ai_chat_history) == 0):
+    suggested_list = PipelineAIAssistant.get_suggested_questions()
+    sugg_cols = st.columns(2)
+    clicked_suggestion = None
+    for s_idx, s_text in enumerate(suggested_list):
+        t_col = sugg_cols[s_idx % 2]
+        with t_col:
+            if st.button(f"• {s_text}", key=f"btn_sugg_{s_idx}", use_container_width=True):
+                clicked_suggestion = s_text
+
+# Clear history button
+if st.session_state.ai_chat_history:
+    c_clear1, c_clear2 = st.columns([5, 1])
+    with c_clear2:
+        if st.button("🗑️ Clear Chat", key="clear_chat_btn", use_container_width=True):
+            st.session_state.ai_chat_history = []
+            st.rerun()
+
+# Render previous messages
+for chat_msg in st.session_state.ai_chat_history:
+    with st.chat_message(chat_msg["role"]):
+        st.markdown(chat_msg["content"])
+
+# User Chat Input
+user_chat_query = st.chat_input("Ask any question about pipeline demand data...")
+active_chat_query = clicked_suggestion or user_chat_query
+
+if active_chat_query:
+    # Append & display user message
+    st.session_state.ai_chat_history.append({"role": "user", "content": active_chat_query})
+    with st.chat_message("user"):
+        st.markdown(active_chat_query)
+
+    # Generate assistant answer
+    with st.chat_message("assistant"):
+        with st.spinner("🤖 Analyzing Pipeline Demand data..."):
+            ans_res = ai_assistant.answer_question(active_chat_query)
+            ans_md = ans_res["response"]
+            st.markdown(ans_md)
+            st.session_state.ai_chat_history.append({"role": "assistant", "content": ans_md})
