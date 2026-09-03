@@ -471,7 +471,7 @@ if not df.empty:
                 time_counts = plot_df.groupby(['Month', 'Month_Sort', 'Resource Level']).size().reset_index(name='Demand Count')
                 time_counts = time_counts.sort_values('Month_Sort')
                 
-                fig_time = px.bar(time_counts, x='Month', y='Demand Count', color='Resource Level', barmode='group', title="2. Month Wise Demand Count by Resource Level")
+                fig_time = px.bar(time_counts, x='Month', y='Demand Count', color='Resource Level', barmode='group', title="2. Month Wise Open Demand Count by Resource Level")
                 # Ensure chronological sorting on x-axis
                 fig_time.update_xaxes(categoryorder='array', categoryarray=time_counts['Month'].unique())
                 st.plotly_chart(fig_time, use_container_width=True)
