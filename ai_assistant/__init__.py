@@ -4,5 +4,11 @@ Provides natural-language question answering grounded strictly on PipelineDemand
 """
 
 from .assistant import PipelineAIAssistant, ask_pipeline_assistant
+from .dst_assistant import DSTBenchAIAssistant, ask_dst_bench_assistant
 
-__all__ = ["PipelineAIAssistant", "ask_pipeline_assistant"]
+__all__ = [
+    "PipelineAIAssistant", 
+    "ask_pipeline_assistant",
+    "DSTBenchAIAssistant",
+    "ask_dst_bench_assistant"
+]
