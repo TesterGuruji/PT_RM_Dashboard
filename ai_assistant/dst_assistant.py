@@ -84,13 +84,16 @@ class DSTBenchAIAssistant:
                 print(f"[DSTBenchAIAssistant] LLM call failed, falling back to deterministic engine: {e}")
 
         # 2. Fallback Path: Deterministic Evaluation
+        notice = self.llm_client.unavailable_notice()
         fast_res = self._eval_deterministic(clean_q)
         if fast_res is not None:
+            if notice:
+                fast_res["response"] = f"{notice}\n\n{fast_res['response']}"
             return fast_res
 
         # 3. Fallback
         return {
-            "response": f"{DST_FALLBACK_MESSAGE}\n\n{DST_SOURCE_CITATION}",
+            "response": f"{notice}\n\n{DST_FALLBACK_MESSAGE}\n\n{DST_SOURCE_CITATION}" if notice else f"{DST_FALLBACK_MESSAGE}\n\n{DST_SOURCE_CITATION}",
             "operation": "unsupported",
             "raw_results": None,
             "table": None,

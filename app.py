@@ -384,8 +384,9 @@ def get_last_refresh_timestamp(file_path: str) -> str:
     return datetime.now().strftime("%d %b %Y, %I:%M %p")
 
 @st.cache_data
-def load_data(file_path, expected_cols):
-    """Loads dataset cleanly, populating missing values to prevent render crashes."""
+def load_data(file_path, expected_cols, file_mtime=None):
+    """Loads dataset cleanly, populating missing values to prevent render crashes.
+    file_mtime is only part of the cache key, so edits made to the CSV outside the app invalidate the cache."""
     if not os.path.exists(file_path):
         return pd.DataFrame(columns=expected_cols)
     try:
@@ -395,6 +396,33 @@ def load_data(file_path, expected_cols):
     except Exception as e:
         st.error(f"Failed to parse {file_path}: {e}")
         return pd.DataFrame(columns=expected_cols)
+
+def restore_blank_cells(df, file_path):
+    """Reverts display-only 'Unassigned' fills back to blanks for cells that were empty in the source CSV."""
+    if not os.path.exists(file_path):
+        return df
+    original = pd.read_csv(file_path)
+    df = df.copy()
+    shared_idx = df.index.intersection(original.index)
+    for col in df.columns.intersection(original.columns):
+        was_blank = original.loc[shared_idx, col].isna()
+        still_filled = df.loc[shared_idx, col].astype(str) == 'Unassigned'
+        mask = was_blank & still_filled
+        df.loc[mask[mask].index, col] = None
+    return df
+
+def restore_integer_columns(df):
+    """Casts numeric columns holding only whole numbers to nullable Int64, so blanks don't turn 10 into 10.0 on save."""
+    df = df.copy()
+    for col in df.columns:
+        values = df[col].dropna()
+        if values.empty:
+            continue
+        numeric = pd.to_numeric(values, errors='coerce')
+        is_number = values.map(lambda v: pd.api.types.is_number(v) and not pd.api.types.is_bool(v))
+        if is_number.all() and numeric.notna().all() and (numeric % 1 == 0).all():
+            df[col] = pd.to_numeric(df[col], errors='coerce').astype('Int64')
+    return df
 
 # -----------------------------------------------------------------------------
 # SIDEBAR NAVIGATION & ENTERPRISE APP SHELL
@@ -419,7 +447,7 @@ with st.sidebar:
     current_config = FILES[selection]
     file_path = current_config["path"]
     expected_cols = current_config["cols"]
-    raw_df = load_data(file_path, expected_cols)
+    raw_df = load_data(file_path, expected_cols, os.path.getmtime(file_path) if os.path.exists(file_path) else None)
     
     st.markdown('<div class="sidebar-section-header">Data Source Operations</div>', unsafe_allow_html=True)
     
@@ -744,7 +772,7 @@ if selection == "Pipeline Demands":
 
     # 1. Global Text Filter
     if search_query and not display_df.empty:
-        mask = display_df.apply(lambda row: row.astype(str).str.contains(search_query, case=False, na=False).any(), axis=1)
+        mask = display_df.apply(lambda row: row.astype(str).str.contains(search_query, case=False, na=False, regex=False).any(), axis=1)
         display_df = display_df[mask]
 
     # 2. Status Filter
@@ -901,6 +929,9 @@ if selection == "Pipeline Demands":
                 # Process Deletions
                 if explicit_deletes:
                     raw_df = raw_df.drop(index=list(set(explicit_deletes)))
+
+                # Undo display-only 'Unassigned' fills before additions reset the index
+                raw_df = restore_blank_cells(raw_df, file_path)
                     
                 # 3. Additions
                 added_rows = editor_state.get("added_rows", [])
@@ -914,7 +945,7 @@ if selection == "Pipeline Demands":
                     raw_df = pd.concat([raw_df, new_df[raw_df.columns]], ignore_index=True)
                     
                 # Save back to CSV
-                df_to_save = raw_df[[c for c in expected_cols if c in raw_df.columns]]
+                df_to_save = restore_integer_columns(raw_df[[c for c in expected_cols if c in raw_df.columns]])
                 df_to_save.to_csv(file_path, index=False)
                 st.success("Successfully synchronized changes to CSV!")
                 load_data.clear()
@@ -1022,11 +1053,12 @@ elif selection == "DST Bench Resources":
     # DYNAMIC KPI INTELLIGENCE METRICS
     # -------------------------------------------------------------------------
     if not raw_df.empty and 'Status' in raw_df.columns:
-        total_bench = len(raw_df)
+        #total_bench = len(raw_df)
         
         # Standardize status for accurate calculation
         status_series = raw_df['Status'].astype(str).str.strip().str.upper()
-        
+        total_bench = int((status_series != 'BILLING STARTED').sum())
+       
         profile_shared_count = int((status_series == 'PROFILE SHARED').sum())
         onboarding_billing_count = int(((status_series == 'ONBOARDING STARTED') | (status_series == 'BILLING STARTED')).sum())
         awaiting_count = int((status_series == 'AWAITING ENGAGEMENT').sum())
@@ -1329,7 +1361,7 @@ elif selection == "DST Bench Resources":
 
     # 1. Global Text Filter
     if search_query_dst and not display_df.empty:
-        mask = display_df.apply(lambda row: row.astype(str).str.contains(search_query_dst, case=False, na=False).any(), axis=1)
+        mask = display_df.apply(lambda row: row.astype(str).str.contains(search_query_dst, case=False, na=False, regex=False).any(), axis=1)
         display_df = display_df[mask]
 
     # 2. Status Filter
@@ -1504,6 +1536,9 @@ elif selection == "DST Bench Resources":
                 # Process Deletions
                 if explicit_deletes:
                     raw_df = raw_df.drop(index=list(set(explicit_deletes)))
+
+                # Undo display-only 'Unassigned' fills before additions reset the index
+                raw_df = restore_blank_cells(raw_df, file_path)
                     
                 # 3. Additions
                 added_rows = editor_state_dst.get("added_rows", [])
@@ -1517,7 +1552,7 @@ elif selection == "DST Bench Resources":
                     raw_df = pd.concat([raw_df, new_df[raw_df.columns]], ignore_index=True)
                     
                 # Save back to CSV
-                df_to_save = raw_df[[c for c in expected_cols if c in raw_df.columns]]
+                df_to_save = restore_integer_columns(raw_df[[c for c in expected_cols if c in raw_df.columns]])
                 df_to_save.to_csv(file_path, index=False)
                 st.success("Successfully synchronized changes to CSV!")
                 load_data.clear()

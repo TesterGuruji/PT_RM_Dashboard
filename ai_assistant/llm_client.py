@@ -26,6 +26,7 @@ class LLMClient:
     def __init__(self, provider: Optional[str] = None, model: Optional[str] = None):
         self.provider = provider or os.getenv("LLM_PROVIDER", "").lower()
         self.model = model
+        self.last_error: Optional[str] = None
         self._detect_provider_and_keys()
 
     def _detect_provider_and_keys(self):
@@ -150,6 +151,7 @@ STRICT OPERATIONAL RULES:
     def _call_llm(self, system_instruction: str, prompt: str, temperature: float = 0.0) -> Optional[str]:
         """Dispatches LLM call to appropriate backend with automatic fallback on model errors."""
         self._detect_provider_and_keys()
+        self.last_error = None
         try:
             if self.provider == "gemini":
                 return self._call_gemini(system_instruction, prompt, temperature)
@@ -159,14 +161,28 @@ STRICT OPERATIONAL RULES:
                 return self._call_groq(system_instruction, prompt, temperature)
         except Exception as e:
             print(f"[LLMClient Error] {self.provider}: {e}")
+            self.last_error = str(e)
             # If the configured Gemini model is unavailable, retry once with the stable default
             if self.provider == "gemini" and self.model != DEFAULT_GEMINI_MODEL:
                 try:
-                    return self._call_gemini_with_model(DEFAULT_GEMINI_MODEL, system_instruction, prompt, temperature)
+                    result = self._call_gemini_with_model(DEFAULT_GEMINI_MODEL, system_instruction, prompt, temperature)
+                    self.last_error = None
+                    return result
                 except Exception as ex2:
                     print(f"[LLMClient Gemini Fallback Error]: {ex2}")
             return None
         return None
+
+    def unavailable_notice(self) -> Optional[str]:
+        """User-facing explanation when the last LLM call failed, or None if it succeeded."""
+        if not self.last_error:
+            return None
+        err = self.last_error.upper()
+        if "429" in err or "RESOURCE_EXHAUSTED" in err or "QUOTA" in err:
+            reason = f"the {self.provider} API quota has been exhausted"
+        else:
+            reason = f"the {self.provider} API returned an error"
+        return f"⚠️ **AI service unavailable** ({reason}). Answered with the offline query engine, which supports a limited set of question types."
 
     def _call_gemini(self, system_instruction: str, prompt: str, temperature: float) -> Optional[str]:
         return self._call_gemini_with_model(self.model, system_instruction, prompt, temperature)

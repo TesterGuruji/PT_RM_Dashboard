@@ -25,6 +25,9 @@ def dataframe_to_markdown(df: pd.DataFrame) -> str:
         lines.append("| " + " | ".join(str(row[h]) for h in headers) + " |")
     return "\n".join(lines)
 
+def _with_notice(notice: Optional[str], text: str) -> str:
+    return f"{notice}\n\n{text}" if notice else text
+
 class PipelineAIAssistant:
     def __init__(self, csv_path: str = DEFAULT_CSV_PATH, df: Optional[pd.DataFrame] = None):
         self.csv_path = csv_path
@@ -92,12 +95,13 @@ class PipelineAIAssistant:
                 print(f"[PipelineAIAssistant] LLM call failed, falling back to deterministic engine: {e}")
 
         # 2. Fallback Path: Deterministic Query Parser & Safe Pandas Execution
+        notice = self.llm_client.unavailable_notice()
         structured_query = self.parser.parse(clean_q)
         computed_result = self.executor.execute(structured_query)
 
         if computed_result.get("status") == "unsupported" or computed_result.get("empty", False):
             return {
-                "response": f"{FALLBACK_NOT_FOUND_MESSAGE}\n\n{SOURCE_CITATION}",
+                "response": _with_notice(notice, f"{FALLBACK_NOT_FOUND_MESSAGE}\n\n{SOURCE_CITATION}"),
                 "operation": "unsupported",
                 "raw_results": computed_result,
                 "table": None,
@@ -107,7 +111,7 @@ class PipelineAIAssistant:
         formatted_text, display_table, chart_data = self._format_computed_output(clean_q, computed_result)
 
         return {
-            "response": formatted_text,
+            "response": _with_notice(notice, formatted_text),
             "operation": computed_result.get("operation"),
             "raw_results": computed_result,
             "table": display_table,
