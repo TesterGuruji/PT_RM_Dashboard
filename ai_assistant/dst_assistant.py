@@ -63,35 +63,30 @@ class DSTBenchAIAssistant:
                 "status": "empty_csv"
             }
 
-        # 1. Deterministic Fast-Path
-        fast_res = self._eval_deterministic(clean_q)
-        if fast_res is not None:
-            return fast_res
-
-        # 2. LLM Fallback if available
+        # 1. Primary Path: Direct LLM Grounded Synthesis using file data
         if self.llm_client.is_available():
             try:
-                system_prompt = f"""You are a specialized assistant for DST Bench Resource data.
-CSV Columns: GPN, Name, Resource Level, Status, Bench Days, Last Project Release Date, Last Project Name, Additional Comments, Location, Cousellor Name.
-The current dataset has {len(self.raw_df)} records.
-Data records summary:
-{self.raw_df.to_string(index=False)}
-
-Answer the user's question directly, concisely, and factually based ONLY on this dataset.
-Never make up facts. End with: {DST_SOURCE_CITATION}"""
-                response = self.llm_client.generate_text(clean_q, system_prompt=system_prompt)
-                if response:
-                    if DST_SOURCE_CITATION not in response:
-                        response += f"\n\n{DST_SOURCE_CITATION}"
+                llm_response = self.llm_client.generate_grounded_answer(
+                    user_question=clean_q,
+                    df=self.raw_df,
+                    source_name="DST_Bench.csv",
+                    dataset_description="Performance test bench resources, bench aging duration, release timelines, locations, and counsellor allocations."
+                )
+                if llm_response:
                     return {
-                        "response": response,
-                        "operation": "llm_generated",
+                        "response": llm_response,
+                        "operation": "llm_grounded",
                         "raw_results": None,
                         "table": None,
                         "chart_data": None
                     }
             except Exception as e:
-                print(f"[DSTBenchAIAssistant] LLM generation error: {e}")
+                print(f"[DSTBenchAIAssistant] LLM call failed, falling back to deterministic engine: {e}")
+
+        # 2. Fallback Path: Deterministic Evaluation
+        fast_res = self._eval_deterministic(clean_q)
+        if fast_res is not None:
+            return fast_res
 
         # 3. Fallback
         return {

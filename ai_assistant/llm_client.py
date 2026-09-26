@@ -1,11 +1,12 @@
 """
 Unified LLM Client Supporting Google Gemini, OpenAI, and Groq.
-Handles structured query generation and natural-language synthesis.
+Provides data-grounded question answering and structured query generation.
 """
 
 import os
 import json
 import re
+import pandas as pd
 from typing import Dict, Any, Optional, Tuple
 from dotenv import load_dotenv
 from .prompts import (
@@ -15,7 +16,7 @@ from .prompts import (
     SOURCE_CITATION
 )
 
-load_dotenv()
+load_dotenv(override=True)
 
 class LLMClient:
     def __init__(self, provider: Optional[str] = None, model: Optional[str] = None):
@@ -25,6 +26,7 @@ class LLMClient:
 
     def _detect_provider_and_keys(self):
         """Auto-detects active provider and API key if not explicitly set."""
+        load_dotenv(override=True)
         self.gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
         self.openai_key = os.getenv("OPENAI_API_KEY", "").strip()
         self.groq_key = os.getenv("GROQ_API_KEY", "").strip()
@@ -50,6 +52,7 @@ class LLMClient:
 
     def is_available(self) -> bool:
         """Returns True if an API key is available for the configured provider."""
+        self._detect_provider_and_keys()
         if self.provider == "gemini":
             return bool(self.gemini_key)
         elif self.provider == "openai":
@@ -57,6 +60,69 @@ class LLMClient:
         elif self.provider == "groq":
             return bool(self.groq_key)
         return False
+
+    def generate_grounded_answer(
+        self, 
+        user_question: str, 
+        df: pd.DataFrame, 
+        source_name: str = "PipelineDemand_Details.csv",
+        dataset_description: str = ""
+    ) -> Optional[str]:
+        """
+        Sends user question directly to LLM with complete file context and strict grounding rules.
+        """
+        if not self.is_available() or df.empty:
+            return None
+
+        # Build clean string representation of the dataset
+        df_records_str = df.to_string(index=False)
+        total_count = len(df)
+        cols_str = ", ".join(df.columns.tolist())
+
+        system_instruction = f"""You are an expert Performance Testing Resource Management AI Assistant.
+You answer user questions strictly based on the provided dataset from `{source_name}`.
+
+DATASET INFORMATION:
+- Source File: `{source_name}`
+- Total Records: {total_count}
+- Columns: {cols_str}
+{f"- Description: {dataset_description}" if dataset_description else ""}
+
+CURRENT DATASET RECORDS:
+{df_records_str}
+
+STRICT OPERATIONAL RULES:
+1. Answer factually and accurately using ONLY the data records shown above.
+2. If the user asks for counts, specific values, status lists, summaries, comparisons, or rankings, perform the calculation accurately from the data.
+3. If the user's question cannot be answered from the provided records (e.g. asking about unrelated topics like recipes, code generation, outside companies, weather), politely reply:
+   "I couldn't find enough information in the {source_name} data to answer that question."
+4. Structure your answer cleanly with GitHub-flavored Markdown:
+   - Use bold for key metrics and numbers.
+   - Use markdown tables for lists of records when appropriate.
+   - Use bullet points for summaries and comparisons.
+5. End every response with:
+   📊 Source: {source_name}
+"""
+
+        prompt = f"User Question: \"{user_question}\""
+
+        try:
+            response = self._call_llm(
+                system_instruction=system_instruction,
+                prompt=prompt,
+                temperature=0.1
+            )
+            if response and response.strip():
+                resp_text = response.strip()
+                citation = f"📊 Source: {source_name}"
+                if citation not in resp_text:
+                    resp_text += f"\n\n{citation}"
+                return resp_text
+        except Exception as e:
+            print(f"[LLMClient generate_grounded_answer error]: {e}")
+            return None
+
+        return None
 
     def generate_json_query(self, user_question: str) -> Optional[Dict[str, Any]]:
         """
@@ -78,43 +144,9 @@ class LLMClient:
 
         return self._extract_json(raw_response)
 
-    def generate_natural_response(self, user_question: str, computed_result: Dict[str, Any]) -> str:
-        """
-        Generates a concise, grounded natural-language response based on computed data results.
-        """
-        if not self.is_available():
-            # Fallback to direct template formatter if LLM is unavailable
-            return self._fallback_template_response(user_question, computed_result)
-
-        if computed_result.get("status") == "unsupported" or computed_result.get("empty", False):
-            return f"{FALLBACK_NOT_FOUND_MESSAGE}\n\n{SOURCE_CITATION}"
-
-        prompt = f"""
-User Question: "{user_question}"
-
-Computed Results from PipelineDemand_Details.csv:
-{json.dumps(computed_result, indent=2, default=str)}
-
-Please provide a clear, concise natural language answer based STRICTLY on the above computed results.
-"""
-
-        response = self._call_llm(
-            system_instruction=RESPONSE_SYNTHESIS_SYSTEM_PROMPT,
-            prompt=prompt,
-            temperature=0.1
-        )
-
-        if not response or FALLBACK_NOT_FOUND_MESSAGE in response:
-            return f"{FALLBACK_NOT_FOUND_MESSAGE}\n\n{SOURCE_CITATION}"
-
-        # Ensure citation is included
-        if SOURCE_CITATION not in response:
-            response = f"{response.strip()}\n\n{SOURCE_CITATION}"
-
-        return response
-
     def _call_llm(self, system_instruction: str, prompt: str, temperature: float = 0.0) -> Optional[str]:
-        """Dispatches LLM call to appropriate backend."""
+        """Dispatches LLM call to appropriate backend with automatic fallback on model errors."""
+        self._detect_provider_and_keys()
         try:
             if self.provider == "gemini":
                 return self._call_gemini(system_instruction, prompt, temperature)
@@ -123,20 +155,22 @@ Please provide a clear, concise natural language answer based STRICTLY on the ab
             elif self.provider == "groq":
                 return self._call_groq(system_instruction, prompt, temperature)
         except Exception as e:
-            # Handle model deprecation/version fallback if necessary
-            if self.provider == "gemini" and ("404" in str(e) or "not found" in str(e).lower()):
-                try:
-                    # Try fallback model
-                    fallback_model = "gemini-1.5-flash" if self.model != "gemini-1.5-flash" else "gemini-2.0-flash"
-                    return self._call_gemini_with_model(fallback_model, system_instruction, prompt, temperature)
-                except Exception:
-                    pass
             print(f"[LLMClient Error] {self.provider}: {e}")
+            # If Gemini failed due to invalid model name, try standard gemini-1.5-flash
+            if self.provider == "gemini" and self.model != "gemini-1.5-flash":
+                try:
+                    return self._call_gemini_with_model("gemini-1.5-flash", system_instruction, prompt, temperature)
+                except Exception as ex2:
+                    print(f"[LLMClient Gemini Fallback Error]: {ex2}")
             return None
         return None
 
     def _call_gemini(self, system_instruction: str, prompt: str, temperature: float) -> Optional[str]:
-        return self._call_gemini_with_model(self.model, system_instruction, prompt, temperature)
+        # Validate model name
+        target_model = self.model
+        if target_model in ["gemini-3.1-flash-lite", "gemini-3-flash", "gemini-3.0-flash"]:
+            target_model = "gemini-1.5-flash"
+        return self._call_gemini_with_model(target_model, system_instruction, prompt, temperature)
 
     def _call_gemini_with_model(self, model_name: str, system_instruction: str, prompt: str, temperature: float) -> Optional[str]:
         import google.generativeai as genai
@@ -181,12 +215,10 @@ Please provide a clear, concise natural language answer based STRICTLY on the ab
     def _extract_json(self, text: str) -> Optional[Dict[str, Any]]:
         """Extracts JSON object from text even if enclosed in markdown code fences."""
         try:
-            # Strip code blocks
             clean_text = re.sub(r"^```json\s*", "", text.strip(), flags=re.MULTILINE)
             clean_text = re.sub(r"^```\s*", "", clean_text, flags=re.MULTILINE)
             clean_text = re.sub(r"```$", "", clean_text, flags=re.MULTILINE).strip()
             
-            # Find the first { and last }
             start = clean_text.find("{")
             end = clean_text.rfind("}")
             if start != -1 and end != -1:
@@ -195,29 +227,3 @@ Please provide a clear, concise natural language answer based STRICTLY on the ab
         except Exception:
             pass
         return None
-
-    def _fallback_template_response(self, question: str, result: Dict[str, Any]) -> str:
-        """Deterministic response formatter when LLM is unavailable."""
-        if result.get("status") == "unsupported" or result.get("empty", False):
-            return f"{FALLBACK_NOT_FOUND_MESSAGE}\n\n{SOURCE_CITATION}"
-
-        op = result.get("operation")
-        if op == "count":
-            count = result.get("count", 0)
-            desc = result.get("description", "matching pipeline demands")
-            return f"There are **{count}** {desc}.\n\n{SOURCE_CITATION}"
-        elif op == "filter":
-            records = result.get("records", [])
-            count = len(records)
-            if count == 0:
-                return f"No matching records found in Pipeline Demand data.\n\n{SOURCE_CITATION}"
-            return f"Found **{count}** matching pipeline demand(s).\n\n{SOURCE_CITATION}"
-        elif op == "rank":
-            rank_data = result.get("rank_data", [])
-            if rank_data:
-                top_item = rank_data[0]
-                return f"**{top_item['name']}** has the highest demand with **{top_item['count']}** records.\n\n{SOURCE_CITATION}"
-        elif op == "summary":
-            return f"**Pipeline Summary:** Total demands: **{result.get('total_demands')}**, Open: **{result.get('open_demands')}**, Invalid: **{result.get('invalid_demands')}**, Awaiting Confirmation: **{result.get('awaiting_confirmation')}**.\n\n{SOURCE_CITATION}"
-
-        return f"{FALLBACK_NOT_FOUND_MESSAGE}\n\n{SOURCE_CITATION}"

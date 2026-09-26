@@ -71,13 +71,30 @@ class PipelineAIAssistant:
                 "status": "empty_csv"
             }
 
-        # 1. Parse Question into Structured Query
-        structured_query = self.parser.parse(clean_q)
+        # 1. Primary Path: Direct LLM Grounded Synthesis using file data
+        if self.llm_client.is_available():
+            try:
+                llm_response = self.llm_client.generate_grounded_answer(
+                    user_question=clean_q,
+                    df=self.raw_df,
+                    source_name="PipelineDemand_Details.csv",
+                    dataset_description="Upcoming performance testing demand, resource allocation, and fulfillment across sectors."
+                )
+                if llm_response:
+                    return {
+                        "response": llm_response,
+                        "operation": "llm_grounded",
+                        "raw_results": None,
+                        "table": None,
+                        "chart_data": None
+                    }
+            except Exception as e:
+                print(f"[PipelineAIAssistant] LLM call failed, falling back to deterministic engine: {e}")
 
-        # 2. Execute Structured Query on DataFrame
+        # 2. Fallback Path: Deterministic Query Parser & Safe Pandas Execution
+        structured_query = self.parser.parse(clean_q)
         computed_result = self.executor.execute(structured_query)
 
-        # 3. Check for unsupported / not found
         if computed_result.get("status") == "unsupported" or computed_result.get("empty", False):
             return {
                 "response": f"{FALLBACK_NOT_FOUND_MESSAGE}\n\n{SOURCE_CITATION}",
@@ -87,7 +104,6 @@ class PipelineAIAssistant:
                 "chart_data": None
             }
 
-        # 4. Synthesize Grounded Natural Response
         formatted_text, display_table, chart_data = self._format_computed_output(clean_q, computed_result)
 
         return {
