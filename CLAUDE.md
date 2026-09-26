@@ -23,11 +23,12 @@ Unset the API key (or set `LLM_PROVIDER` to a provider with no key) to force the
 
 Streamlit dashboard for Performance Testing resource management, backed entirely by CSV files in the repo root (no database). Run from the repo root — all CSV paths are relative.
 
-### `app.py` (single ~1600-line script)
+### `app.py` (single ~1200-line script)
 - `FILES` dict defines the modules shown in the sidebar radio: `"Pipeline Demands"` → `PipelineDemand_Details.csv`, `"DST Bench Resources"` → `DST_Bench.csv`, each with its expected column list. Adding a module means adding a `FILES` entry **and** a new `elif selection == ...` branch.
-- Each module branch is a large, mostly parallel block: KPI cards → Plotly charts → filters/search → `st.data_editor` table (edit mode) → AI assistant chat. The DST block duplicates the Pipeline block with `_dst`-suffixed widget keys/session-state names; keep keys unique when editing either.
-- `load_data` is `@st.cache_data` and fills NaN with `'Unassigned'`. Edits made in the data editor are written **directly back to the CSV** (`to_csv`), then `load_data.clear()` + `st.rerun()`.
-- Styling is a big inline `<style>` block at the top plus lots of `st.markdown(..., unsafe_allow_html=True)` HTML snippets.
+- Each module branch is a KPI strip (`render_kpis`) followed by three `st.tabs`: **Overview** (Plotly charts in keyed `st.container(border=True, key="card-...")` cards), **Records** (filters/search → `st.data_editor` in edit mode → save), **AI Assistant** (chat). The DST block duplicates the Pipeline block with `_dst`-suffixed widget keys/session-state names; keep keys unique when editing either. Code in the Records tab computes `display_df`, which the AI tab (later in the script) uses as its filtered context.
+- `load_data` is `@st.cache_data` (keyed on file mtime) and fills NaN with `'Unassigned'` for display. Saving from the data editor writes **directly back to the CSV** after `restore_blank_cells` (undoes the display fill) and `restore_integer_columns` (keeps `10` from becoming `10.0`), then `load_data.clear()` + `st.rerun()`.
+- Theming: native widgets are themed in `.streamlit/config.toml` (light theme, Inter, navy sidebar via `[theme.sidebar]`); the `<style>` block at the top of `app.py` only styles the custom HTML components (`.kpi`, `.app-header`, `.notice`, sidebar cards) and `div[class*="st-key-card-"]` containers.
+- Chart helpers (`style_figure`, `status_breakdown_chart`, `monthly_level_chart`, `bench_aging_chart`) share one Plotly style and are rendered with `show_chart` (`theme=None`, so Streamlit doesn't restyle them). Colours are fixed per entity: `PIPELINE_STATUS_COLORS` / `DST_STATUS_COLORS` (the DST stages are an ordered light→dark blue ramp) and `LEVEL_COLORS` (one colour per resource level across the app); the Records table tints Status cells from the same maps via `status_cell_style`.
 - The assistant is re-instantiated each rerun with `working_df` — the currently filtered view if filters are active, otherwise the full dataset. Chat history lives in `st.session_state.ai_chat_history` / `dst_ai_chat_history`.
 
 ### `ai_assistant/` package

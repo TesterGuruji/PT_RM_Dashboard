@@ -1,0 +1,21 @@
+[client]
+# Hides the "Deploy" button and developer menu items for end users
+toolbarMode = "minimal"
+
+[theme]
+base = "light"
+primaryColor = "#1F5FBF"
+backgroundColor = "#F4F6F9"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#0F1B2D"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+baseRadius = "6px"
+borderColor = "#DDE2EA"
+showWidgetBorder = true
+
+[theme.sidebar]
+backgroundColor = "#0F1B2D"
+secondaryBackgroundColor = "#1A2940"
+textColor = "#C9D3E1"
+borderColor = "#24354F"
+primaryColor = "#5B9BF0"
