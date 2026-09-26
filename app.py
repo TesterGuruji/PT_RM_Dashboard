@@ -4,7 +4,8 @@ import plotly.graph_objects as go
 import os
 from datetime import datetime
 from dotenv import load_dotenv
-from ai_assistant import PipelineAIAssistant, DSTBenchAIAssistant
+from ai_assistant import PipelineAIAssistant, DSTBenchAIAssistant, SoonToBenchAIAssistant
+from ai_assistant.soon_to_bench_assistant import RELEASE_WINDOWS, add_release_columns
 from ai_assistant.llm_client import LLMClient
 
 load_dotenv()
@@ -117,6 +118,11 @@ FILES = {
         "path": "DST_Bench.csv",
         "description": "Monitor performance test bench resources, bench duration, release timelines, locations, and counsellor allocations.",
         "cols": ["GPN", "Name", "Resource Level", "Status", "Bench Days", "Last Project Release Date", "Last Project Name", "Additional Comments", "Location", "Cousellor Name"]
+    },
+    "DST Soon To Bench Resources": {
+        "path": "DST_SoonTobench.csv",
+        "description": "Track resources whose engagements are ending, release dates, and who is due to join the bench next.",
+        "cols": ["GPN", "Name", "Eng ID", "Eng Name", "Sector", "Start Date", "End Date", "Level", "Status", "Comments", "Location", "Counsellor Name"]
     }
 }
 
@@ -141,11 +147,14 @@ def load_data(file_path, expected_cols, file_mtime=None):
         st.error(f"Failed to parse {file_path}: {e}")
         return pd.DataFrame(columns=expected_cols)
 
-def restore_blank_cells(df, file_path):
-    """Reverts display-only 'Unassigned' fills back to blanks for cells that were empty in the source CSV."""
+def restore_blank_cells(df, file_path, strip_headers=False):
+    """Reverts display-only 'Unassigned' fills back to blanks for cells that were empty in the source CSV.
+    strip_headers matches CSVs whose header names carry stray spaces (the caller has already stripped df's)."""
     if not os.path.exists(file_path):
         return df
     original = pd.read_csv(file_path)
+    if strip_headers:
+        original.columns = original.columns.str.strip()
     df = df.copy()
     shared_idx = df.index.intersection(original.index)
     for col in df.columns.intersection(original.columns):
@@ -327,6 +336,73 @@ def bench_aging_chart(df, days_col, name_col, id_col):
     fig.update_yaxes(autorange="reversed", gridcolor="rgba(0,0,0,0)", tickfont=dict(color="#33415C", size=12))
     fig.update_xaxes(showticklabels=False, showline=False, range=[0, aging["days"].max() * 1.3])
     fig.update_layout(bargap=0.4, showlegend=False)
+    return fig
+
+
+# Soon To Bench: release-window urgency uses the reserved status colours (always shown with a text label)
+RELEASE_WINDOW_COLORS = {"Overdue": STATUS_COLORS["critical"], "Next 30 days": STATUS_COLORS["serious"],
+                         "31–60 days": STATUS_COLORS["warning"], "60+ days": STATUS_COLORS["good"], "No end date": OTHER_COLOR}
+SOON_STATUS_ORDER = ["In Progress", "Completed"]
+SOON_STATUS_COLORS = {"In Progress": CATEGORICAL_COLORS[0], "Completed": CATEGORICAL_COLORS[2]}
+
+
+def release_alert_chart(df):
+    """Days from today to each resource's End Date (negative = overdue), most urgent first, coloured by release window."""
+    alert = df[df["Days To Release"].notna()].sort_values("Days To Release")
+    if alert.empty:
+        return None
+    alert = alert.assign(label=alert["Name"].astype(str) + "  ·  " + alert["GPN"].astype(str),
+                         end=pd.to_datetime(alert["End Date"], errors="coerce").dt.strftime("%d %b %Y"))
+    fig = go.Figure()
+    for window in RELEASE_WINDOWS:
+        part = alert[alert["Release Window"] == window]
+        if part.empty:
+            continue
+        days = part["Days To Release"].astype(int)
+        text = [f"{-d} days overdue" if d < 0 else f"in {d} days" for d in days]
+        fig.add_bar(
+            x=days, y=part["label"], orientation="h", name=window,
+            marker=dict(color=RELEASE_WINDOW_COLORS[window], line=dict(width=0)),
+            text=[f"{t}  ·  {e}" for t, e in zip(text, part["end"])], textposition="outside", cliponaxis=False,
+            textfont=dict(color="#33415C", size=12),
+            customdata=part["end"], hovertemplate="<b>%{y}</b><br>End date: %{customdata}<br>Days to release: %{x}<extra>" + window + "</extra>",
+        )
+    style_figure(fig, height=max(220, 48 * len(alert) + 80))
+    span = max(abs(alert["Days To Release"].min()), abs(alert["Days To Release"].max()), 1)
+    fig.update_yaxes(categoryorder="array", categoryarray=list(alert["label"]), autorange="reversed",
+                     gridcolor="rgba(0,0,0,0)", tickfont=dict(color="#33415C", size=12))
+    fig.update_xaxes(zeroline=False, showgrid=True, gridcolor="#EBEEF3", ticksuffix="d",
+                     # Outside labels need room on both sides: overdue labels extend left of their bars
+                     range=[min(0, alert["Days To Release"].min()) - span * (1.5 if alert["Days To Release"].min() < 0 else 0.1),
+                            max(0, alert["Days To Release"].max()) + span * 0.9])
+    fig.add_vline(x=0, line_width=1, line_color="#33415C")
+    fig.add_annotation(x=0, y=1.02, yref="paper", text="Today", showarrow=False, font=dict(size=11, color="#33415C"), yanchor="bottom")
+    fig.update_layout(bargap=0.4, barmode="overlay", legend_traceorder="normal", margin=dict(t=28))
+    return fig
+
+
+def level_window_chart(df):
+    """Soon-to-bench count per resource level (seniority order), stacked by release window."""
+    plot_df = df[df["Level"].astype(str).str.strip() != "Unassigned"].copy()
+    if plot_df.empty:
+        return None
+    plot_df["Level"] = plot_df["Level"].astype(str).str.strip()
+    levels = list(level_color_map(plot_df["Level"]).keys())
+    counts = plot_df.groupby(["Level", "Release Window"]).size().reset_index(name="Resources")
+    fig = go.Figure()
+    for window in RELEASE_WINDOWS:
+        part = counts[counts["Release Window"] == window]
+        if part.empty:
+            continue
+        fig.add_bar(
+            x=part["Level"], y=part["Resources"], name=window,
+            marker=dict(color=RELEASE_WINDOW_COLORS[window], line=dict(color="#FFFFFF", width=2)),
+            hovertemplate="<b>%{x}</b><br>" + window + ": %{y} resource(s)<extra></extra>",
+        )
+    style_figure(fig, height=300)
+    fig.update_layout(barmode="stack", legend_traceorder="normal")
+    fig.update_xaxes(categoryorder="array", categoryarray=levels)
+    fig.update_yaxes(dtick=1, rangemode="tozero")
     return fig
 
 
@@ -1168,3 +1244,371 @@ elif selection == "DST Bench Resources":
                         st.markdown(ans_md)
                         st.session_state.dst_ai_chat_history.append({"role": "assistant", "content": ans_md})
 
+
+# =============================================================================
+# MODULE 3: DST SOON TO BENCH RESOURCES
+# =============================================================================
+elif selection == "DST Soon To Bench Resources":
+    # The source CSV's header names carry stray spaces (" End Date"); work with trimmed names
+    raw_df.columns = raw_df.columns.str.strip()
+    release_df = add_release_columns(raw_df)
+
+    # -------------------------------------------------------------------------
+    # KPI STRIP
+    # -------------------------------------------------------------------------
+    if not raw_df.empty:
+        window_counts = release_df["Release Window"].value_counts()
+        upcoming = release_df[release_df["Days To Release"] >= 0].sort_values("Days To Release")
+        if not upcoming.empty:
+            next_row = upcoming.iloc[0]
+            next_end = pd.to_datetime(next_row["End Date"], errors="coerce").strftime("%d %b %Y")
+            next_kpi = {"label": "Next release in", "value": int(next_row["Days To Release"]), "unit": "days",
+                        "foot": f"{next_row['Name']} · {next_end}"}
+        else:
+            next_kpi = {"label": "Next release in", "value": "—", "foot": "No upcoming end dates"}
+
+        render_kpis([
+            {"label": "Soon to bench", "value": len(raw_df), "foot": "Engagements ending"},
+            {"label": "Overdue", "value": int(window_counts.get("Overdue", 0)), "foot": "End date has passed",
+             "dot": RELEASE_WINDOW_COLORS["Overdue"]},
+            {"label": "Next 30 days", "value": int(window_counts.get("Next 30 days", 0)), "foot": "Releasing within 30 days",
+             "dot": RELEASE_WINDOW_COLORS["Next 30 days"]},
+            {"label": "31–60 days", "value": int(window_counts.get("31–60 days", 0)), "foot": "Releasing in 31–60 days",
+             "dot": RELEASE_WINDOW_COLORS["31–60 days"]},
+            next_kpi,
+        ])
+
+    tab_overview, tab_records, tab_ai = st.tabs([
+        ":material/monitoring: Overview", ":material/table_rows: Records", ":material/auto_awesome: AI Assistant"
+    ])
+
+    # -------------------------------------------------------------------------
+    # OVERVIEW: ANALYTICS
+    # -------------------------------------------------------------------------
+    with tab_overview:
+        if raw_df.empty:
+            st.markdown('<div class="empty-state"><b>No soon-to-bench resources yet</b>Add records in the Records tab.</div>', unsafe_allow_html=True)
+        else:
+            # Data-quality check: an End Date earlier than the Start Date usually means a typo
+            bad_dates = pd.DataFrame()
+            if {"Start Date", "End Date"} <= set(raw_df.columns):
+                starts = pd.to_datetime(raw_df["Start Date"], errors="coerce")
+                ends = pd.to_datetime(raw_df["End Date"], errors="coerce")
+                bad_dates = raw_df[ends < starts]
+            if not bad_dates.empty:
+                who = ", ".join(f"{r['Name']} ({r['GPN']})" for _, r in bad_dates.iterrows())
+                st.markdown(f'<div class="notice notice-warning"><strong>Check dates:</strong> {len(bad_dates)} record(s) have an '
+                            f'End Date before the Start Date — {who}. Correct them in the Records tab.</div>', unsafe_allow_html=True)
+
+            chart_col1, chart_col2 = st.columns([1, 1.35], gap="medium")
+            with chart_col1:
+                with st.container(border=True, key="card-stb-status"):
+                    card_heading("By status", "Count and share of soon-to-bench resources")
+                    if 'Status' in raw_df.columns:
+                        show_chart(status_breakdown_chart(raw_df['Status'], SOON_STATUS_ORDER, SOON_STATUS_COLORS, "Resources"))
+            with chart_col2:
+                with st.container(border=True, key="card-stb-level"):
+                    card_heading("Soon to bench by level", "Stacked by release window")
+                    fig_level = level_window_chart(release_df) if 'Level' in raw_df.columns else None
+                    if fig_level is not None:
+                        show_chart(fig_level)
+                    else:
+                        st.caption("No resource levels to chart.")
+
+            with st.container(border=True, key="card-stb-alert"):
+                card_heading("Release alerts by date", "Days until each engagement's End Date, most urgent first")
+                fig_alert = release_alert_chart(release_df)
+                if fig_alert is not None:
+                    show_chart(fig_alert)
+                else:
+                    st.caption("No valid end dates to chart.")
+
+    with tab_records:
+        # -------------------------------------------------------------------------
+        # ADVANCED FILTER TOOLBAR & DATA CONTROLS
+        # -------------------------------------------------------------------------
+        with st.container(border=True, key="card-filters-stb"):
+            # Six filters don't fit one row legibly: search, status and level first, then the rest
+            f_c1, f_c2, f_c3 = st.columns([2, 1, 1])
+            f_c4, f_c5, f_c6 = st.columns(3)
+
+            with f_c1:
+                search_query_stb = st.text_input(
+                    "Search",
+                    placeholder="Search GPN, name, engagement, sector or location",
+                    label_visibility="collapsed",
+                    icon=":material/search:",
+                    key="search_query_stb"
+                )
+
+            def filter_options(col, all_label):
+                values = sorted({str(v).strip() for v in raw_df[col].dropna() if str(v).strip() != 'Unassigned'}) if col in raw_df.columns else []
+                return [all_label] + values
+
+            with f_c2:
+                selected_status_stb = st.selectbox("Status Filter", filter_options('Status', "All Statuses"), label_visibility="collapsed", key="status_stb")
+            with f_c3:
+                selected_level_stb = st.selectbox("Level Filter", filter_options('Level', "All Levels"), label_visibility="collapsed", key="level_stb")
+            with f_c4:
+                window_options = ["All Release Windows"] + [w for w in RELEASE_WINDOWS if w in set(release_df["Release Window"])]
+                selected_window_stb = st.selectbox("Release Window Filter", window_options, label_visibility="collapsed", key="window_stb")
+            with f_c5:
+                selected_location_stb = st.selectbox("Location Filter", filter_options('Location', "All Locations"), label_visibility="collapsed", key="loc_stb")
+            with f_c6:
+                selected_counsellor_stb = st.selectbox("Counsellor Filter", filter_options('Counsellor Name', "All Counsellors"), label_visibility="collapsed", key="counsellor_stb")
+
+        # Apply Active Filters
+        display_df = raw_df.copy()
+
+        # Enforce explicit data types across schema
+        for col in display_df.columns:
+            if col in ['GPN', 'Eng ID']:
+                display_df[col] = pd.to_numeric(display_df[col], errors='coerce').astype('Int64')
+            elif 'Date' in col:
+                display_df[col] = pd.to_datetime(display_df[col], errors='coerce').dt.date
+            else:
+                display_df[col] = display_df[col].astype(str).str.strip()
+
+        # 1. Global Text Filter
+        if search_query_stb and not display_df.empty:
+            mask = display_df.apply(lambda row: row.astype(str).str.contains(search_query_stb, case=False, na=False, regex=False).any(), axis=1)
+            display_df = display_df[mask]
+
+        # 2. Column Filters
+        for col, selected in [('Status', selected_status_stb), ('Level', selected_level_stb),
+                              ('Location', selected_location_stb), ('Counsellor Name', selected_counsellor_stb)]:
+            if not selected.startswith("All ") and col in display_df.columns:
+                display_df = display_df[display_df[col].str.lower() == selected.lower()]
+
+        # 3. Release Window Filter (computed from End Date)
+        if selected_window_stb != "All Release Windows":
+            display_df = display_df[release_df.loc[display_df.index, "Release Window"] == selected_window_stb]
+
+        # Filter Status & Action Bar
+        ctrl_left, ctrl_right = st.columns([2, 1.5], vertical_alignment="center")
+
+        with ctrl_left:
+            active_filters = [f for f in (selected_status_stb, selected_level_stb, selected_window_stb, selected_location_stb, selected_counsellor_stb)
+                              if not f.startswith("All ")]
+            if search_query_stb:
+                active_filters.insert(0, f'"{search_query_stb}"')
+            filter_note = f'<span class="filter-note">Filtered by {", ".join(active_filters)}</span>' if active_filters else ""
+            st.markdown(f'<span class="result-pill">{len(display_df)} of {len(raw_df)} soon-to-bench resources</span>{filter_note}', unsafe_allow_html=True)
+
+        with ctrl_right:
+            btn_col1, btn_col2 = st.columns([1, 1])
+            with btn_col1:
+                edit_mode_stb = st.toggle("Edit mode", value=False, help="Edit cells inline, add rows at the bottom, or mark rows for deletion", key="edit_mode_stb")
+            with btn_col2:
+                if not display_df.empty:
+                    export_df = display_df.join(release_df[["Days To Release", "Release Window"]])
+                    st.download_button(
+                        label="Export CSV",
+                        icon=":material/download:",
+                        data=export_df.to_csv(index=False).encode('utf-8'),
+                        file_name=f"dst_soon_to_bench_export_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv",
+                        width="stretch",
+                        key="export_stb_btn"
+                    )
+
+        # -------------------------------------------------------------------------
+        # MAIN DATA TABLE & EDITOR
+        # -------------------------------------------------------------------------
+        if edit_mode_stb:
+            st.markdown(
+                '<div class="notice notice-warning"><strong>Edit mode is on.</strong> Double-click a cell to change it, '
+                'add rows at the bottom of the table, or tick <em>Delete Row</em> to remove a record. '
+                'Changes are written to the source file only when you select <strong>Save changes</strong>.</div>',
+                unsafe_allow_html=True)
+
+        if not display_df.empty or raw_df.empty:
+            editor_key_stb = f"editor_{selection}"
+
+            def with_existing(defaults, col):
+                existing = [str(v).strip() for v in raw_df[col].dropna().unique()] if col in raw_df.columns else []
+                return list(dict.fromkeys(defaults + [v for v in existing if v != 'Unassigned']))
+
+            col_config_stb = {}
+            for col in display_df.columns:
+                if col in ['GPN', 'Eng ID']:
+                    col_config_stb[col] = st.column_config.NumberColumn(col, format="%d", min_value=0, step=1)
+                elif 'Date' in col:
+                    col_config_stb[col] = st.column_config.DateColumn(col, format="MM/DD/YYYY")
+                elif col == 'Status':
+                    col_config_stb[col] = st.column_config.SelectboxColumn(
+                        col, help="Engagement status", options=with_existing(["IN PROGRESS", "COMPLETED"], col), required=True
+                    ) if edit_mode_stb else st.column_config.TextColumn(col)
+                elif col == 'Level' and edit_mode_stb:
+                    col_config_stb[col] = st.column_config.SelectboxColumn(
+                        col, help="Seniority Level",
+                        options=with_existing(["Staff 1", "Staff 2", "Senior 1", "Senior 2", "Senior 3", "Manager", "Senior Manager", "Associate Director", "Director"], col)
+                    )
+                elif col == 'Location' and edit_mode_stb:
+                    col_config_stb[col] = st.column_config.SelectboxColumn(
+                        col, help="Office Location",
+                        options=with_existing(["Noida", "Bengaluru", "Pune", "Gurugram", "Hyderabad", "Chennai", "Kolkata", "Kochi", "Trivandrum", "Coimbatore"], col)
+                    )
+                else:
+                    col_config_stb[col] = st.column_config.TextColumn(col)
+
+            if edit_mode_stb:
+                if not display_df.empty and '🗑️ Delete Row' not in display_df.columns:
+                    display_df.insert(0, '🗑️ Delete Row', False)
+                st.data_editor(
+                    display_df,
+                    width="stretch",
+                    height=380,
+                    num_rows="dynamic",
+                    hide_index=True,
+                    key=editor_key_stb,
+                    column_config=col_config_stb
+                )
+            else:
+                # Read mode shows the computed release columns next to End Date
+                view_df = display_df.copy()
+                insert_at = view_df.columns.get_loc("End Date") + 1 if "End Date" in view_df.columns else len(view_df.columns)
+                view_df.insert(insert_at, "Days To Release", release_df.loc[view_df.index, "Days To Release"].astype("Int64"))
+                view_df.insert(insert_at + 1, "Release Window", release_df.loc[view_df.index, "Release Window"])
+                col_config_stb["Days To Release"] = st.column_config.NumberColumn("Days To Release", format="%d", help="Days from today to End Date; negative means overdue")
+
+                def soon_row_style(row):
+                    styles = status_cell_style(SOON_STATUS_COLORS)(row)
+                    color = RELEASE_WINDOW_COLORS.get(row.get("Release Window"))
+                    if color:
+                        styles[row.index.get_loc("Release Window")] = f"color: #0F1B2D; font-weight: 600; background-color: {color}22;"
+                    return styles
+
+                st.dataframe(
+                    view_df.style.apply(soon_row_style, axis=1),
+                    width="stretch",
+                    height=380,
+                    hide_index=True,
+                    column_config=col_config_stb
+                )
+
+            # Edit State Handling & Save Serialization
+            editor_state_stb = st.session_state.get(editor_key_stb, {})
+            has_changes_stb = edit_mode_stb and any(len(v) > 0 for v in editor_state_stb.values() if isinstance(v, (dict, list)))
+
+            if has_changes_stb:
+                st.warning("You have unsaved changes in the table above.", icon=":material/edit_note:")
+                if st.button("Save changes", icon=":material/save:", width="stretch", type="primary", key="save_stb_btn"):
+                    explicit_deletes = []
+
+                    # 1. Updates & Explicit Deletions
+                    for idx_pos, changes in editor_state_stb.get("edited_rows", {}).items():
+                        true_idx = display_df.index[idx_pos]
+                        if changes.get('🗑️ Delete Row', False) is True:
+                            explicit_deletes.append(true_idx)
+                        else:
+                            for col, val in changes.items():
+                                if col != '🗑️ Delete Row':
+                                    if raw_df[col].dtype != 'object':
+                                        raw_df[col] = raw_df[col].astype('object')
+                                    raw_df.at[true_idx, col] = val
+
+                    # 2. Native Deletions
+                    explicit_deletes.extend(display_df.index[i] for i in editor_state_stb.get("deleted_rows", []))
+                    if explicit_deletes:
+                        raw_df = raw_df.drop(index=list(set(explicit_deletes)))
+
+                    # Undo display-only 'Unassigned' fills before additions reset the index
+                    raw_df = restore_blank_cells(raw_df, file_path, strip_headers=True)
+
+                    # 3. Additions
+                    added_rows = editor_state_stb.get("added_rows", [])
+                    if added_rows:
+                        new_df = pd.DataFrame(added_rows).drop(columns=['🗑️ Delete Row'], errors='ignore')
+                        for c in raw_df.columns:
+                            if c not in new_df.columns:
+                                new_df[c] = None
+                        raw_df = pd.concat([raw_df, new_df[raw_df.columns]], ignore_index=True)
+
+                    # Save back to CSV (header names are written trimmed)
+                    df_to_save = restore_integer_columns(raw_df[[c for c in expected_cols if c in raw_df.columns]])
+                    df_to_save.to_csv(file_path, index=False)
+                    st.session_state["records_saved_toast"] = True
+                    load_data.clear()
+                    st.rerun()
+        else:
+            st.markdown('<div class="empty-state"><b>No matching soon-to-bench resources</b>Adjust or clear the search and filters above.</div>', unsafe_allow_html=True)
+
+    with tab_ai:
+        # -------------------------------------------------------------------------
+        # DST SOON TO BENCH AI ASSISTANT
+        # -------------------------------------------------------------------------
+        st.markdown("<div style='height: 1.5rem;'></div>", unsafe_allow_html=True)
+
+        with st.container():
+            st.markdown("""
+            <div class="ai-head">
+                <div>
+                    <div class="ai-tag">AI Assistant</div>
+                    <div class="card-title">Soon To Bench Intelligence Assistant</div>
+                    <div class="card-subtitle">Ask about upcoming releases, overdue end dates, levels, locations and counsellors.</div>
+                </div>
+                <span class="source-chip">Answers grounded in DST_SoonTobench.csv</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Contextual data detection
+            is_filtered_stb = (search_query_stb != "" or any(not f.startswith("All ") for f in (
+                selected_status_stb, selected_level_stb, selected_window_stb, selected_location_stb, selected_counsellor_stb))) and not display_df.empty
+
+            if is_filtered_stb:
+                st.markdown(f"""
+                <div class="notice notice-info">
+                    <strong>Filtered view:</strong> answers use only the current filter selection (<strong>{len(display_df)}</strong> matching soon-to-bench resources).
+                </div>
+                """, unsafe_allow_html=True)
+                working_df_stb = raw_df.loc[display_df.index]
+            else:
+                st.markdown(f"""
+                <div class="notice notice-neutral">
+                    <strong>Full dataset:</strong> answers cover all <strong>{len(raw_df)}</strong> soon-to-bench records.
+                </div>
+                """, unsafe_allow_html=True)
+                working_df_stb = raw_df.copy()
+
+            stb_ai_assistant = SoonToBenchAIAssistant(df=working_df_stb)
+
+            if "stb_ai_chat_history" not in st.session_state:
+                st.session_state.stb_ai_chat_history = []
+
+            # Suggested Prompts Expander
+            with st.expander("Suggested questions", icon=":material/lightbulb:", expanded=len(st.session_state.stb_ai_chat_history) == 0):
+                sugg_cols_stb = st.columns(2)
+                clicked_suggestion_stb = None
+                for s_idx, s_text in enumerate(SoonToBenchAIAssistant.get_suggested_questions()):
+                    with sugg_cols_stb[s_idx % 2]:
+                        if st.button(s_text, key=f"btn_sugg_stb_{s_idx}", width="stretch"):
+                            clicked_suggestion_stb = s_text
+
+            # Clear Chat Action
+            if st.session_state.stb_ai_chat_history:
+                c_clear_space, c_clear_btn = st.columns([5, 1])
+                with c_clear_btn:
+                    if st.button("Clear chat", icon=":material/delete_sweep:", key="clear_chat_stb_btn", width="stretch"):
+                        st.session_state.stb_ai_chat_history = []
+                        st.rerun()
+
+            # Render Conversation Transcript
+            for chat_msg in st.session_state.stb_ai_chat_history:
+                with st.chat_message(chat_msg["role"]):
+                    st.markdown(chat_msg["content"])
+
+            # Chat Input Box
+            user_chat_query_stb = st.chat_input("Ask a question about soon-to-bench resources", key="stb_chat_input")
+            active_chat_query_stb = clicked_suggestion_stb or user_chat_query_stb
+
+            if active_chat_query_stb:
+                st.session_state.stb_ai_chat_history.append({"role": "user", "content": active_chat_query_stb})
+                with st.chat_message("user"):
+                    st.markdown(active_chat_query_stb)
+
+                with st.chat_message("assistant"):
+                    with st.spinner("Analyzing Soon To Bench records..."):
+                        ans_md = stb_ai_assistant.answer_question(active_chat_query_stb)["response"]
+                        st.markdown(ans_md)
+                        st.session_state.stb_ai_chat_history.append({"role": "assistant", "content": ans_md})
