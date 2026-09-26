@@ -63,7 +63,7 @@ LLM_PROVIDER=gemini
 
 # Google Gemini API Key (Free tier from https://aistudio.google.com/app/apikey)
 GEMINI_API_KEY=your_gemini_api_key_here
-GEMINI_MODEL=gemini-1.5-flash
+GEMINI_MODEL=gemini-3.5-flash
 ```
 
 *Note: The assistant features a deterministic fast-path layer that immediately answers standard analytical queries even without an external API key.*

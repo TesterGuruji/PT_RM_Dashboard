@@ -18,6 +18,10 @@ from .prompts import (
 
 load_dotenv(override=True)
 
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
+# Generous enough for markdown tables listing every record
+MAX_OUTPUT_TOKENS = 4096
+
 class LLMClient:
     def __init__(self, provider: Optional[str] = None, model: Optional[str] = None):
         self.provider = provider or os.getenv("LLM_PROVIDER", "").lower()
@@ -43,8 +47,7 @@ class LLMClient:
 
         if not self.model:
             if self.provider == "gemini":
-                # Prefer fast lightweight flash models
-                self.model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+                self.model = os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
             elif self.provider == "openai":
                 self.model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
             elif self.provider == "groq":
@@ -156,32 +159,31 @@ STRICT OPERATIONAL RULES:
                 return self._call_groq(system_instruction, prompt, temperature)
         except Exception as e:
             print(f"[LLMClient Error] {self.provider}: {e}")
-            # If Gemini failed due to invalid model name, try standard gemini-1.5-flash
-            if self.provider == "gemini" and self.model != "gemini-1.5-flash":
+            # If the configured Gemini model is unavailable, retry once with the stable default
+            if self.provider == "gemini" and self.model != DEFAULT_GEMINI_MODEL:
                 try:
-                    return self._call_gemini_with_model("gemini-1.5-flash", system_instruction, prompt, temperature)
+                    return self._call_gemini_with_model(DEFAULT_GEMINI_MODEL, system_instruction, prompt, temperature)
                 except Exception as ex2:
                     print(f"[LLMClient Gemini Fallback Error]: {ex2}")
             return None
         return None
 
     def _call_gemini(self, system_instruction: str, prompt: str, temperature: float) -> Optional[str]:
-        # Validate model name
-        target_model = self.model
-        if target_model in ["gemini-3.1-flash-lite", "gemini-3-flash", "gemini-3.0-flash"]:
-            target_model = "gemini-1.5-flash"
-        return self._call_gemini_with_model(target_model, system_instruction, prompt, temperature)
+        return self._call_gemini_with_model(self.model, system_instruction, prompt, temperature)
 
     def _call_gemini_with_model(self, model_name: str, system_instruction: str, prompt: str, temperature: float) -> Optional[str]:
-        import google.generativeai as genai
-        genai.configure(api_key=self.gemini_key)
-        
-        model = genai.GenerativeModel(
-            model_name=model_name,
-            system_instruction=system_instruction,
-            generation_config={"temperature": temperature, "max_output_tokens": 1024}
+        from google import genai
+        from google.genai import types
+        client = genai.Client(api_key=self.gemini_key)
+        response = client.models.generate_content(
+            model=model_name,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=temperature,
+                max_output_tokens=MAX_OUTPUT_TOKENS
+            )
         )
-        response = model.generate_content(prompt)
         return response.text if response and response.text else None
 
     def _call_openai(self, system_instruction: str, prompt: str, temperature: float) -> Optional[str]:
@@ -194,7 +196,7 @@ STRICT OPERATIONAL RULES:
                 {"role": "user", "content": prompt}
             ],
             temperature=temperature,
-            max_tokens=1024
+            max_tokens=MAX_OUTPUT_TOKENS
         )
         return response.choices[0].message.content
 
@@ -208,7 +210,7 @@ STRICT OPERATIONAL RULES:
                 {"role": "user", "content": prompt}
             ],
             temperature=temperature,
-            max_tokens=1024
+            max_tokens=MAX_OUTPUT_TOKENS
         )
         return response.choices[0].message.content
 
