@@ -342,7 +342,6 @@ def bench_aging_chart(df, days_col, name_col, id_col):
 # Soon To Bench: release-window urgency uses the reserved status colours (always shown with a text label)
 RELEASE_WINDOW_COLORS = {"Overdue": STATUS_COLORS["critical"], "Next 30 days": STATUS_COLORS["serious"],
                          "31–60 days": STATUS_COLORS["warning"], "60+ days": STATUS_COLORS["good"], "No end date": OTHER_COLOR}
-SOON_STATUS_ORDER = ["In Progress", "Completed"]
 SOON_STATUS_COLORS = {"In Progress": CATEGORICAL_COLORS[0], "Completed": CATEGORICAL_COLORS[2]}
 
 
@@ -359,7 +358,7 @@ def release_alert_chart(df):
         if part.empty:
             continue
         days = part["Days To Release"].astype(int)
-        text = [f"{-d} days overdue" if d < 0 else f"in {d} days" for d in days]
+        text = [(f"{-d} day{'s' if d != -1 else ''} overdue" if d < 0 else f"in {d} day{'s' if d != 1 else ''}") for d in days]
         fig.add_bar(
             x=days, y=part["label"], orientation="h", name=window,
             marker=dict(color=RELEASE_WINDOW_COLORS[window], line=dict(width=0)),
@@ -368,7 +367,8 @@ def release_alert_chart(df):
             customdata=part["end"], hovertemplate="<b>%{y}</b><br>End date: %{customdata}<br>Days to release: %{x}<extra>" + window + "</extra>",
         )
     style_figure(fig, height=max(220, 48 * len(alert) + 80))
-    span = max(abs(alert["Days To Release"].min()), abs(alert["Days To Release"].max()), 1)
+    # A minimum 30-day span keeps one-day values from filling the plot and yields whole-day ticks
+    span = max(abs(alert["Days To Release"].min()), abs(alert["Days To Release"].max()), 30)
     fig.update_yaxes(categoryorder="array", categoryarray=list(alert["label"]), autorange="reversed",
                      gridcolor="rgba(0,0,0,0)", tickfont=dict(color="#33415C", size=12))
     fig.update_xaxes(zeroline=False, showgrid=True, gridcolor="#EBEEF3", ticksuffix="d",
@@ -377,7 +377,8 @@ def release_alert_chart(df):
                             max(0, alert["Days To Release"].max()) + span * 0.9])
     fig.add_vline(x=0, line_width=1, line_color="#33415C")
     fig.add_annotation(x=0, y=1.02, yref="paper", text="Today", showarrow=False, font=dict(size=11, color="#33415C"), yanchor="bottom")
-    fig.update_layout(bargap=0.4, barmode="overlay", legend_traceorder="normal", margin=dict(t=28))
+    fig.update_xaxes(tickformat="d")
+    fig.update_layout(bargap=0.4, barmode="overlay", legend_traceorder="normal", margin=dict(t=28), showlegend=True)
     return fig
 
 
@@ -400,7 +401,8 @@ def level_window_chart(df):
             hovertemplate="<b>%{x}</b><br>" + window + ": %{y} resource(s)<extra></extra>",
         )
     style_figure(fig, height=300)
-    fig.update_layout(barmode="stack", legend_traceorder="normal")
+    # Legend stays visible even for one window: colour alone must never carry the urgency meaning
+    fig.update_layout(barmode="stack", legend_traceorder="normal", showlegend=True, bargap=0.45 if len(levels) > 2 else 0.7)
     fig.update_xaxes(categoryorder="array", categoryarray=levels)
     fig.update_yaxes(dtick=1, rangemode="tozero")
     return fig
@@ -420,6 +422,117 @@ def status_cell_style(colors):
                 styles[row.index.get_loc("Status")] = f"color: #0F1B2D; font-weight: 600; background-color: {color}22;"
         return styles
     return _style
+
+
+# -----------------------------------------------------------------------------
+# SHARED RECORDS-TAB SAVE LOGIC & AI ASSISTANT TAB (used by all three modules)
+# -----------------------------------------------------------------------------
+def save_editor_changes(raw_df, display_df, editor_state, file_path, expected_cols, loaded_mtime, strip_headers=False):
+    """Applies data_editor edits/deletions/additions on top of raw_df and writes the result back to file_path.
+    Returns False without writing if the file changed on disk since it was loaded (another user/process saved
+    in the meantime), so a late save here can't silently clobber those changes."""
+    if loaded_mtime is not None and os.path.exists(file_path) and os.path.getmtime(file_path) != loaded_mtime:
+        st.error(
+            "This file was changed elsewhere since you loaded it. Refresh the page and redo your edits before saving.",
+            icon=":material/error:"
+        )
+        return False
+
+    explicit_deletes = []
+
+    # 1. Updates & Explicit Deletions
+    for idx_pos, changes in editor_state.get("edited_rows", {}).items():
+        true_idx = display_df.index[idx_pos]
+        if changes.get('🗑️ Delete Row', False) is True:
+            explicit_deletes.append(true_idx)
+        else:
+            for col, val in changes.items():
+                if col != '🗑️ Delete Row':
+                    if raw_df[col].dtype != 'object':
+                        raw_df[col] = raw_df[col].astype('object')
+                    raw_df.at[true_idx, col] = val
+
+    # 2. Native Deletions
+    deleted_indices = editor_state.get("deleted_rows", [])
+    if deleted_indices:
+        explicit_deletes.extend(display_df.index[i] for i in deleted_indices)
+    if explicit_deletes:
+        raw_df = raw_df.drop(index=list(set(explicit_deletes)))
+
+    # Undo display-only 'Unassigned' fills before additions reset the index
+    raw_df = restore_blank_cells(raw_df, file_path, strip_headers=strip_headers)
+
+    # 3. Additions
+    added_rows = editor_state.get("added_rows", [])
+    if added_rows:
+        new_df = pd.DataFrame(added_rows).drop(columns=['🗑️ Delete Row'], errors='ignore')
+        for c in raw_df.columns:
+            if c not in new_df.columns:
+                new_df[c] = None
+        raw_df = pd.concat([raw_df, new_df[raw_df.columns]], ignore_index=True)
+
+    # Save back to CSV
+    df_to_save = restore_integer_columns(raw_df[[c for c in expected_cols if c in raw_df.columns]])
+    df_to_save.to_csv(file_path, index=False)
+    st.session_state["records_saved_toast"] = True
+    load_data.clear()
+    return True
+
+
+def render_ai_assistant_tab(assistant_class, working_df, session_key, key_prefix, source_csv, title, subtitle, chat_placeholder, spinner_text):
+    """Renders the chat UI shared by the Pipeline / DST Bench / Soon-To-Bench AI Assistant tabs."""
+    st.markdown("<div style='height: 1.5rem;'></div>", unsafe_allow_html=True)
+
+    with st.container():
+        st.markdown(f"""
+        <div class="ai-head">
+            <div>
+                <div class="ai-tag">AI Assistant</div>
+                <div class="card-title">{title}</div>
+                <div class="card-subtitle">{subtitle}</div>
+            </div>
+            <span class="source-chip">Answers grounded in {source_csv}</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        assistant = assistant_class(df=working_df)
+
+        if session_key not in st.session_state:
+            st.session_state[session_key] = []
+
+        with st.expander("Suggested questions", icon=":material/lightbulb:", expanded=len(st.session_state[session_key]) == 0):
+            suggested_list = assistant_class.get_suggested_questions()
+            sugg_cols = st.columns(2)
+            clicked_suggestion = None
+            for s_idx, s_text in enumerate(suggested_list):
+                with sugg_cols[s_idx % 2]:
+                    if st.button(s_text, key=f"{key_prefix}_{s_idx}", width="stretch"):
+                        clicked_suggestion = s_text
+
+        if st.session_state[session_key]:
+            c_clear_space, c_clear_btn = st.columns([5, 1])
+            with c_clear_btn:
+                if st.button("Clear chat", icon=":material/delete_sweep:", key=f"{key_prefix}_clear_btn", width="stretch"):
+                    st.session_state[session_key] = []
+                    st.rerun()
+
+        for chat_msg in st.session_state[session_key]:
+            with st.chat_message(chat_msg["role"]):
+                st.markdown(chat_msg["content"])
+
+        user_chat_query = st.chat_input(chat_placeholder, key=f"{key_prefix}_input")
+        active_chat_query = clicked_suggestion or user_chat_query
+
+        if active_chat_query:
+            st.session_state[session_key].append({"role": "user", "content": active_chat_query})
+            with st.chat_message("user"):
+                st.markdown(active_chat_query)
+
+            with st.chat_message("assistant"):
+                with st.spinner(spinner_text):
+                    ans_md = assistant.answer_question(active_chat_query)["response"]
+                    st.markdown(ans_md)
+                    st.session_state[session_key].append({"role": "assistant", "content": ans_md})
 
 
 # -----------------------------------------------------------------------------
@@ -443,7 +556,8 @@ with st.sidebar:
     current_config = FILES[selection]
     file_path = current_config["path"]
     expected_cols = current_config["cols"]
-    raw_df = load_data(file_path, expected_cols, os.path.getmtime(file_path) if os.path.exists(file_path) else None)
+    loaded_mtime = os.path.getmtime(file_path) if os.path.exists(file_path) else None
+    raw_df = load_data(file_path, expected_cols, loaded_mtime)
     refresh_time_str = get_last_refresh_timestamp(file_path)
 
     st.markdown('<div class="sb-label">Data Source</div>', unsafe_allow_html=True)
@@ -719,51 +833,8 @@ if selection == "Pipeline Demands":
             if has_changes:
                 st.warning("You have unsaved changes in the table above.", icon=":material/edit_note:")
                 if st.button("Save changes", icon=":material/save:", width="stretch", type="primary", key="save_pipeline_btn"):
-                    explicit_deletes = []
-                
-                    # 1. Updates & Explicit Deletions
-                    for idx_pos, changes in editor_state.get("edited_rows", {}).items():
-                        true_idx = display_df.index[idx_pos]
-                    
-                        if changes.get('🗑️ Delete Row', False) is True:
-                            explicit_deletes.append(true_idx)
-                        else:
-                            for col, val in changes.items():
-                                if col != '🗑️ Delete Row':
-                                    if raw_df[col].dtype != 'object':
-                                        raw_df[col] = raw_df[col].astype('object')
-                                    raw_df.at[true_idx, col] = val
-                                
-                    # 2. Native Deletions
-                    deleted_indices = editor_state.get("deleted_rows", [])
-                    if deleted_indices:
-                        native_deleted = [display_df.index[i] for i in deleted_indices]
-                        explicit_deletes.extend(native_deleted)
-                    
-                    # Process Deletions
-                    if explicit_deletes:
-                        raw_df = raw_df.drop(index=list(set(explicit_deletes)))
-
-                    # Undo display-only 'Unassigned' fills before additions reset the index
-                    raw_df = restore_blank_cells(raw_df, file_path)
-                    
-                    # 3. Additions
-                    added_rows = editor_state.get("added_rows", [])
-                    if added_rows:
-                        new_df = pd.DataFrame(added_rows)
-                        if '🗑️ Delete Row' in new_df.columns:
-                            new_df = new_df.drop(columns=['🗑️ Delete Row'])
-                        for c in raw_df.columns:
-                            if c not in new_df.columns:
-                                new_df[c] = None
-                        raw_df = pd.concat([raw_df, new_df[raw_df.columns]], ignore_index=True)
-                    
-                    # Save back to CSV
-                    df_to_save = restore_integer_columns(raw_df[[c for c in expected_cols if c in raw_df.columns]])
-                    df_to_save.to_csv(file_path, index=False)
-                    st.session_state["records_saved_toast"] = True
-                    load_data.clear()
-                    st.rerun()
+                    if save_editor_changes(raw_df, display_df, editor_state, file_path, expected_cols, loaded_mtime):
+                        st.rerun()
         else:
             st.markdown('<div class="empty-state"><b>No matching demands</b>Adjust or clear the search and filters above.</div>', unsafe_allow_html=True)
 
@@ -771,83 +842,35 @@ if selection == "Pipeline Demands":
         # -------------------------------------------------------------------------
         # PIPELINE DEMAND AI ASSISTANT
         # -------------------------------------------------------------------------
-        st.markdown("<div style='height: 1.5rem;'></div>", unsafe_allow_html=True)
+        # Contextual data detection
+        is_filtered = (search_query != "" or selected_status != "All Statuses" or selected_level != "All Levels" or selected_lead != "All PT Leads") and not display_df.empty
 
-        with st.container():
-            st.markdown("""
-            <div class="ai-head">
-                <div>
-                    <div class="ai-tag">AI Assistant</div>
-                    <div class="card-title">Pipeline Intelligence Assistant</div>
-                    <div class="card-subtitle">Ask about pipeline volume, fulfilment status, seniority mix and lead allocation.</div>
-                </div>
-                <span class="source-chip">Answers grounded in PipelineDemand_Details.csv</span>
+        if is_filtered:
+            st.markdown(f"""
+            <div class="notice notice-info">
+                <strong>Filtered view:</strong> answers use only the current filter selection (<strong>{len(display_df)}</strong> matching demands).
             </div>
             """, unsafe_allow_html=True)
+            working_df = display_df.drop(columns=['🗑️ Delete Row'], errors='ignore')
+        else:
+            st.markdown(f"""
+            <div class="notice notice-neutral">
+                <strong>Full dataset:</strong> answers cover all <strong>{len(raw_df)}</strong> pipeline demand records.
+            </div>
+            """, unsafe_allow_html=True)
+            working_df = raw_df.copy()
 
-            # Contextual data detection
-            is_filtered = (search_query != "" or selected_status != "All Statuses" or selected_level != "All Levels" or selected_lead != "All PT Leads") and not display_df.empty
-        
-            if is_filtered:
-                st.markdown(f"""
-                <div class="notice notice-info">
-                    <strong>Filtered view:</strong> answers use only the current filter selection (<strong>{len(display_df)}</strong> matching demands).
-                </div>
-                """, unsafe_allow_html=True)
-                working_df = display_df.drop(columns=['🗑️ Delete Row'], errors='ignore')
-            else:
-                st.markdown(f"""
-                <div class="notice notice-neutral">
-                    <strong>Full dataset:</strong> answers cover all <strong>{len(raw_df)}</strong> pipeline demand records.
-                </div>
-                """, unsafe_allow_html=True)
-                working_df = raw_df.copy()
-
-            # Initialize Assistant
-            ai_assistant = PipelineAIAssistant(df=working_df)
-
-            if "ai_chat_history" not in st.session_state:
-                st.session_state.ai_chat_history = []
-
-            # Suggested Prompts Expander
-            with st.expander("Suggested questions", icon=":material/lightbulb:", expanded=len(st.session_state.ai_chat_history) == 0):
-                suggested_list = PipelineAIAssistant.get_suggested_questions()
-                sugg_cols = st.columns(2)
-                clicked_suggestion = None
-                for s_idx, s_text in enumerate(suggested_list):
-                    t_col = sugg_cols[s_idx % 2]
-                    with t_col:
-                        if st.button(s_text, key=f"btn_sugg_{s_idx}", width="stretch"):
-                            clicked_suggestion = s_text
-
-            # Clear Chat Action
-            if st.session_state.ai_chat_history:
-                c_clear_space, c_clear_btn = st.columns([5, 1])
-                with c_clear_btn:
-                    if st.button("Clear chat", icon=":material/delete_sweep:", key="clear_chat_btn", width="stretch"):
-                        st.session_state.ai_chat_history = []
-                        st.rerun()
-
-            # Render Conversation Transcript
-            for chat_msg in st.session_state.ai_chat_history:
-                with st.chat_message(chat_msg["role"]):
-                    st.markdown(chat_msg["content"])
-
-            # Chat Input Box
-            user_chat_query = st.chat_input("Ask a question about pipeline demands", key="pipeline_chat_input")
-            active_chat_query = clicked_suggestion or user_chat_query
-
-            if active_chat_query:
-                st.session_state.ai_chat_history.append({"role": "user", "content": active_chat_query})
-                with st.chat_message("user"):
-                    st.markdown(active_chat_query)
-
-                with st.chat_message("assistant"):
-                    with st.spinner("Analyzing Pipeline Demand records..."):
-                        ans_res = ai_assistant.answer_question(active_chat_query)
-                        ans_md = ans_res["response"]
-                        st.markdown(ans_md)
-                        st.session_state.ai_chat_history.append({"role": "assistant", "content": ans_md})
+        render_ai_assistant_tab(
+            assistant_class=PipelineAIAssistant,
+            working_df=working_df,
+            session_key="ai_chat_history",
+            key_prefix="btn_sugg",
+            source_csv="PipelineDemand_Details.csv",
+            title="Pipeline Intelligence Assistant",
+            subtitle="Ask about pipeline volume, fulfilment status, seniority mix and lead allocation.",
+            chat_placeholder="Ask a question about pipeline demands",
+            spinner_text="Analyzing Pipeline Demand records...",
+        )
 
 
 # =============================================================================
@@ -976,7 +999,7 @@ elif selection == "DST Bench Resources":
         # Enforce explicit data types across schema
         for col in display_df.columns:
             if col in ['GPN', 'GUI']:
-                display_df[col] = pd.to_numeric(display_df[col], errors='coerce').fillna(0).astype(int)
+                display_df[col] = pd.to_numeric(display_df[col], errors='coerce').astype('Int64')
             elif col == 'Bench Days':
                 display_df[col] = pd.to_numeric(display_df[col], errors='coerce').fillna(0).astype(int)
             elif 'Date' in col:
@@ -1114,51 +1137,8 @@ elif selection == "DST Bench Resources":
             if has_changes_dst:
                 st.warning("You have unsaved changes in the table above.", icon=":material/edit_note:")
                 if st.button("Save changes", icon=":material/save:", width="stretch", type="primary", key="save_dst_btn"):
-                    explicit_deletes = []
-                
-                    # 1. Updates & Explicit Deletions
-                    for idx_pos, changes in editor_state_dst.get("edited_rows", {}).items():
-                        true_idx = display_df.index[idx_pos]
-                    
-                        if changes.get('🗑️ Delete Row', False) is True:
-                            explicit_deletes.append(true_idx)
-                        else:
-                            for col, val in changes.items():
-                                if col != '🗑️ Delete Row':
-                                    if raw_df[col].dtype != 'object':
-                                        raw_df[col] = raw_df[col].astype('object')
-                                    raw_df.at[true_idx, col] = val
-                                
-                    # 2. Native Deletions
-                    deleted_indices = editor_state_dst.get("deleted_rows", [])
-                    if deleted_indices:
-                        native_deleted = [display_df.index[i] for i in deleted_indices]
-                        explicit_deletes.extend(native_deleted)
-                    
-                    # Process Deletions
-                    if explicit_deletes:
-                        raw_df = raw_df.drop(index=list(set(explicit_deletes)))
-
-                    # Undo display-only 'Unassigned' fills before additions reset the index
-                    raw_df = restore_blank_cells(raw_df, file_path)
-                    
-                    # 3. Additions
-                    added_rows = editor_state_dst.get("added_rows", [])
-                    if added_rows:
-                        new_df = pd.DataFrame(added_rows)
-                        if '🗑️ Delete Row' in new_df.columns:
-                            new_df = new_df.drop(columns=['🗑️ Delete Row'])
-                        for c in raw_df.columns:
-                            if c not in new_df.columns:
-                                new_df[c] = None
-                        raw_df = pd.concat([raw_df, new_df[raw_df.columns]], ignore_index=True)
-                    
-                    # Save back to CSV
-                    df_to_save = restore_integer_columns(raw_df[[c for c in expected_cols if c in raw_df.columns]])
-                    df_to_save.to_csv(file_path, index=False)
-                    st.session_state["records_saved_toast"] = True
-                    load_data.clear()
-                    st.rerun()
+                    if save_editor_changes(raw_df, display_df, editor_state_dst, file_path, expected_cols, loaded_mtime):
+                        st.rerun()
         else:
             st.markdown('<div class="empty-state"><b>No matching bench resources</b>Adjust or clear the search and filters above.</div>', unsafe_allow_html=True)
 
@@ -1166,83 +1146,35 @@ elif selection == "DST Bench Resources":
         # -------------------------------------------------------------------------
         # DST BENCH AI ASSISTANT
         # -------------------------------------------------------------------------
-        st.markdown("<div style='height: 1.5rem;'></div>", unsafe_allow_html=True)
+        # Contextual data detection
+        is_filtered_dst = (search_query_dst != "" or selected_status_dst != "All Statuses" or selected_level_dst != "All Levels" or selected_location != "All Locations" or selected_counsellor != "All Counsellors") and not display_df.empty
 
-        with st.container():
-            st.markdown("""
-            <div class="ai-head">
-                <div>
-                    <div class="ai-tag">AI Assistant</div>
-                    <div class="card-title">DST Bench Intelligence Assistant</div>
-                    <div class="card-subtitle">Ask about bench resources, bench aging, locations and counsellor alignment.</div>
-                </div>
-                <span class="source-chip">Answers grounded in DST_Bench.csv</span>
+        if is_filtered_dst:
+            st.markdown(f"""
+            <div class="notice notice-info">
+                <strong>Filtered view:</strong> answers use only the current filter selection (<strong>{len(display_df)}</strong> matching bench resources).
             </div>
             """, unsafe_allow_html=True)
+            working_df_dst = display_df.drop(columns=['🗑️ Delete Row'], errors='ignore')
+        else:
+            st.markdown(f"""
+            <div class="notice notice-neutral">
+                <strong>Full dataset:</strong> answers cover all <strong>{len(raw_df)}</strong> DST bench records.
+            </div>
+            """, unsafe_allow_html=True)
+            working_df_dst = raw_df.copy()
 
-            # Contextual data detection
-            is_filtered_dst = (search_query_dst != "" or selected_status_dst != "All Statuses" or selected_level_dst != "All Levels" or selected_location != "All Locations" or selected_counsellor != "All Counsellors") and not display_df.empty
-        
-            if is_filtered_dst:
-                st.markdown(f"""
-                <div class="notice notice-info">
-                    <strong>Filtered view:</strong> answers use only the current filter selection (<strong>{len(display_df)}</strong> matching bench resources).
-                </div>
-                """, unsafe_allow_html=True)
-                working_df_dst = display_df.drop(columns=['🗑️ Delete Row'], errors='ignore')
-            else:
-                st.markdown(f"""
-                <div class="notice notice-neutral">
-                    <strong>Full dataset:</strong> answers cover all <strong>{len(raw_df)}</strong> DST bench records.
-                </div>
-                """, unsafe_allow_html=True)
-                working_df_dst = raw_df.copy()
-
-            # Initialize DST Bench Assistant
-            dst_ai_assistant = DSTBenchAIAssistant(df=working_df_dst)
-
-            if "dst_ai_chat_history" not in st.session_state:
-                st.session_state.dst_ai_chat_history = []
-
-            # Suggested Prompts Expander
-            with st.expander("Suggested questions", icon=":material/lightbulb:", expanded=len(st.session_state.dst_ai_chat_history) == 0):
-                suggested_list_dst = DSTBenchAIAssistant.get_suggested_questions()
-                sugg_cols_dst = st.columns(2)
-                clicked_suggestion_dst = None
-                for s_idx, s_text in enumerate(suggested_list_dst):
-                    t_col = sugg_cols_dst[s_idx % 2]
-                    with t_col:
-                        if st.button(s_text, key=f"btn_sugg_dst_{s_idx}", width="stretch"):
-                            clicked_suggestion_dst = s_text
-
-            # Clear Chat Action
-            if st.session_state.dst_ai_chat_history:
-                c_clear_space, c_clear_btn = st.columns([5, 1])
-                with c_clear_btn:
-                    if st.button("Clear chat", icon=":material/delete_sweep:", key="clear_chat_dst_btn", width="stretch"):
-                        st.session_state.dst_ai_chat_history = []
-                        st.rerun()
-
-            # Render Conversation Transcript
-            for chat_msg in st.session_state.dst_ai_chat_history:
-                with st.chat_message(chat_msg["role"]):
-                    st.markdown(chat_msg["content"])
-
-            # Chat Input Box
-            user_chat_query_dst = st.chat_input("Ask a question about bench resources", key="dst_chat_input")
-            active_chat_query_dst = clicked_suggestion_dst or user_chat_query_dst
-
-            if active_chat_query_dst:
-                st.session_state.dst_ai_chat_history.append({"role": "user", "content": active_chat_query_dst})
-                with st.chat_message("user"):
-                    st.markdown(active_chat_query_dst)
-
-                with st.chat_message("assistant"):
-                    with st.spinner("Analyzing DST Bench records..."):
-                        ans_res = dst_ai_assistant.answer_question(active_chat_query_dst)
-                        ans_md = ans_res["response"]
-                        st.markdown(ans_md)
-                        st.session_state.dst_ai_chat_history.append({"role": "assistant", "content": ans_md})
+        render_ai_assistant_tab(
+            assistant_class=DSTBenchAIAssistant,
+            working_df=working_df_dst,
+            session_key="dst_ai_chat_history",
+            key_prefix="btn_sugg_dst",
+            source_csv="DST_Bench.csv",
+            title="DST Bench Intelligence Assistant",
+            subtitle="Ask about bench resources, bench aging, locations and counsellor alignment.",
+            chat_placeholder="Ask a question about bench resources",
+            spinner_text="Analyzing DST Bench records...",
+        )
 
 
 # =============================================================================
@@ -1252,13 +1184,18 @@ elif selection == "DST Soon To Bench Resources":
     # The source CSV's header names carry stray spaces (" End Date"); work with trimmed names
     raw_df.columns = raw_df.columns.str.strip()
     release_df = add_release_columns(raw_df)
+    # KPIs and charts cover only in-flight engagements; COMPLETED rows stay visible in Records and to the AI assistant
+    if 'Status' in release_df.columns:
+        active_df = release_df[release_df['Status'].astype(str).str.strip().str.upper() == 'IN PROGRESS']
+    else:
+        active_df = release_df.iloc[0:0]
 
     # -------------------------------------------------------------------------
-    # KPI STRIP
+    # KPI STRIP (IN PROGRESS only)
     # -------------------------------------------------------------------------
     if not raw_df.empty:
-        window_counts = release_df["Release Window"].value_counts()
-        upcoming = release_df[release_df["Days To Release"] >= 0].sort_values("Days To Release")
+        window_counts = active_df["Release Window"].value_counts()
+        upcoming = active_df[active_df["Days To Release"] >= 0].sort_values("Days To Release")
         if not upcoming.empty:
             next_row = upcoming.iloc[0]
             next_end = pd.to_datetime(next_row["End Date"], errors="coerce").strftime("%d %b %Y")
@@ -1268,7 +1205,7 @@ elif selection == "DST Soon To Bench Resources":
             next_kpi = {"label": "Next release in", "value": "—", "foot": "No upcoming end dates"}
 
         render_kpis([
-            {"label": "Soon to bench", "value": len(raw_df), "foot": "Engagements ending"},
+            {"label": "Soon to bench", "value": len(active_df), "foot": "Engagements in progress"},
             {"label": "Overdue", "value": int(window_counts.get("Overdue", 0)), "foot": "End date has passed",
              "dot": RELEASE_WINDOW_COLORS["Overdue"]},
             {"label": "Next 30 days", "value": int(window_counts.get("Next 30 days", 0)), "foot": "Releasing within 30 days",
@@ -1283,18 +1220,19 @@ elif selection == "DST Soon To Bench Resources":
     ])
 
     # -------------------------------------------------------------------------
-    # OVERVIEW: ANALYTICS
+    # OVERVIEW: ANALYTICS (IN PROGRESS only)
     # -------------------------------------------------------------------------
     with tab_overview:
-        if raw_df.empty:
-            st.markdown('<div class="empty-state"><b>No soon-to-bench resources yet</b>Add records in the Records tab.</div>', unsafe_allow_html=True)
+        if active_df.empty:
+            st.markdown('<div class="empty-state"><b>No in-progress engagements</b>Only resources with status IN PROGRESS are charted here; '
+                        'all records are listed in the Records tab.</div>', unsafe_allow_html=True)
         else:
+            st.markdown(f'<div class="notice notice-neutral"><strong>In-progress engagements only:</strong> KPIs and charts cover '
+                        f'<strong>{len(active_df)}</strong> of {len(raw_df)} records; completed engagements are excluded.</div>', unsafe_allow_html=True)
+
             # Data-quality check: an End Date earlier than the Start Date usually means a typo
-            bad_dates = pd.DataFrame()
-            if {"Start Date", "End Date"} <= set(raw_df.columns):
-                starts = pd.to_datetime(raw_df["Start Date"], errors="coerce")
-                ends = pd.to_datetime(raw_df["End Date"], errors="coerce")
-                bad_dates = raw_df[ends < starts]
+            starts = pd.to_datetime(active_df["Start Date"], errors="coerce") if "Start Date" in active_df.columns else None
+            bad_dates = active_df[pd.to_datetime(active_df["End Date"], errors="coerce") < starts] if starts is not None else active_df.iloc[0:0]
             if not bad_dates.empty:
                 who = ", ".join(f"{r['Name']} ({r['GPN']})" for _, r in bad_dates.iterrows())
                 st.markdown(f'<div class="notice notice-warning"><strong>Check dates:</strong> {len(bad_dates)} record(s) have an '
@@ -1303,21 +1241,23 @@ elif selection == "DST Soon To Bench Resources":
             chart_col1, chart_col2 = st.columns([1, 1.35], gap="medium")
             with chart_col1:
                 with st.container(border=True, key="card-stb-status"):
-                    card_heading("By status", "Count and share of soon-to-bench resources")
-                    if 'Status' in raw_df.columns:
-                        show_chart(status_breakdown_chart(raw_df['Status'], SOON_STATUS_ORDER, SOON_STATUS_COLORS, "Resources"))
+                    # Every charted row is IN PROGRESS, so status is broken down by release urgency instead
+                    card_heading("By release status", "In-progress engagements by time to End Date")
+                    window_order = [w.title() for w in RELEASE_WINDOWS]
+                    window_colors = {w.title(): c for w, c in RELEASE_WINDOW_COLORS.items()}
+                    show_chart(status_breakdown_chart(active_df["Release Window"], window_order, window_colors, "Resources"))
             with chart_col2:
                 with st.container(border=True, key="card-stb-level"):
-                    card_heading("Soon to bench by level", "Stacked by release window")
-                    fig_level = level_window_chart(release_df) if 'Level' in raw_df.columns else None
+                    card_heading("Soon to bench by level", "In-progress engagements, stacked by release window")
+                    fig_level = level_window_chart(active_df) if 'Level' in active_df.columns else None
                     if fig_level is not None:
                         show_chart(fig_level)
                     else:
                         st.caption("No resource levels to chart.")
 
             with st.container(border=True, key="card-stb-alert"):
-                card_heading("Release alerts by date", "Days until each engagement's End Date, most urgent first")
-                fig_alert = release_alert_chart(release_df)
+                card_heading("Release alerts by date", "Days until each in-progress engagement's End Date, most urgent first")
+                fig_alert = release_alert_chart(active_df)
                 if fig_alert is not None:
                     show_chart(fig_alert)
                 else:
@@ -1494,43 +1434,8 @@ elif selection == "DST Soon To Bench Resources":
             if has_changes_stb:
                 st.warning("You have unsaved changes in the table above.", icon=":material/edit_note:")
                 if st.button("Save changes", icon=":material/save:", width="stretch", type="primary", key="save_stb_btn"):
-                    explicit_deletes = []
-
-                    # 1. Updates & Explicit Deletions
-                    for idx_pos, changes in editor_state_stb.get("edited_rows", {}).items():
-                        true_idx = display_df.index[idx_pos]
-                        if changes.get('🗑️ Delete Row', False) is True:
-                            explicit_deletes.append(true_idx)
-                        else:
-                            for col, val in changes.items():
-                                if col != '🗑️ Delete Row':
-                                    if raw_df[col].dtype != 'object':
-                                        raw_df[col] = raw_df[col].astype('object')
-                                    raw_df.at[true_idx, col] = val
-
-                    # 2. Native Deletions
-                    explicit_deletes.extend(display_df.index[i] for i in editor_state_stb.get("deleted_rows", []))
-                    if explicit_deletes:
-                        raw_df = raw_df.drop(index=list(set(explicit_deletes)))
-
-                    # Undo display-only 'Unassigned' fills before additions reset the index
-                    raw_df = restore_blank_cells(raw_df, file_path, strip_headers=True)
-
-                    # 3. Additions
-                    added_rows = editor_state_stb.get("added_rows", [])
-                    if added_rows:
-                        new_df = pd.DataFrame(added_rows).drop(columns=['🗑️ Delete Row'], errors='ignore')
-                        for c in raw_df.columns:
-                            if c not in new_df.columns:
-                                new_df[c] = None
-                        raw_df = pd.concat([raw_df, new_df[raw_df.columns]], ignore_index=True)
-
-                    # Save back to CSV (header names are written trimmed)
-                    df_to_save = restore_integer_columns(raw_df[[c for c in expected_cols if c in raw_df.columns]])
-                    df_to_save.to_csv(file_path, index=False)
-                    st.session_state["records_saved_toast"] = True
-                    load_data.clear()
-                    st.rerun()
+                    if save_editor_changes(raw_df, display_df, editor_state_stb, file_path, expected_cols, loaded_mtime, strip_headers=True):
+                        st.rerun()
         else:
             st.markdown('<div class="empty-state"><b>No matching soon-to-bench resources</b>Adjust or clear the search and filters above.</div>', unsafe_allow_html=True)
 
@@ -1538,77 +1443,33 @@ elif selection == "DST Soon To Bench Resources":
         # -------------------------------------------------------------------------
         # DST SOON TO BENCH AI ASSISTANT
         # -------------------------------------------------------------------------
-        st.markdown("<div style='height: 1.5rem;'></div>", unsafe_allow_html=True)
+        # Contextual data detection
+        is_filtered_stb = (search_query_stb != "" or any(not f.startswith("All ") for f in (
+            selected_status_stb, selected_level_stb, selected_window_stb, selected_location_stb, selected_counsellor_stb))) and not display_df.empty
 
-        with st.container():
-            st.markdown("""
-            <div class="ai-head">
-                <div>
-                    <div class="ai-tag">AI Assistant</div>
-                    <div class="card-title">Soon To Bench Intelligence Assistant</div>
-                    <div class="card-subtitle">Ask about upcoming releases, overdue end dates, levels, locations and counsellors.</div>
-                </div>
-                <span class="source-chip">Answers grounded in DST_SoonTobench.csv</span>
+        if is_filtered_stb:
+            st.markdown(f"""
+            <div class="notice notice-info">
+                <strong>Filtered view:</strong> answers use only the current filter selection (<strong>{len(display_df)}</strong> matching soon-to-bench resources).
             </div>
             """, unsafe_allow_html=True)
+            working_df_stb = raw_df.loc[display_df.index]
+        else:
+            st.markdown(f"""
+            <div class="notice notice-neutral">
+                <strong>Full dataset:</strong> answers cover all <strong>{len(raw_df)}</strong> soon-to-bench records.
+            </div>
+            """, unsafe_allow_html=True)
+            working_df_stb = raw_df.copy()
 
-            # Contextual data detection
-            is_filtered_stb = (search_query_stb != "" or any(not f.startswith("All ") for f in (
-                selected_status_stb, selected_level_stb, selected_window_stb, selected_location_stb, selected_counsellor_stb))) and not display_df.empty
-
-            if is_filtered_stb:
-                st.markdown(f"""
-                <div class="notice notice-info">
-                    <strong>Filtered view:</strong> answers use only the current filter selection (<strong>{len(display_df)}</strong> matching soon-to-bench resources).
-                </div>
-                """, unsafe_allow_html=True)
-                working_df_stb = raw_df.loc[display_df.index]
-            else:
-                st.markdown(f"""
-                <div class="notice notice-neutral">
-                    <strong>Full dataset:</strong> answers cover all <strong>{len(raw_df)}</strong> soon-to-bench records.
-                </div>
-                """, unsafe_allow_html=True)
-                working_df_stb = raw_df.copy()
-
-            stb_ai_assistant = SoonToBenchAIAssistant(df=working_df_stb)
-
-            if "stb_ai_chat_history" not in st.session_state:
-                st.session_state.stb_ai_chat_history = []
-
-            # Suggested Prompts Expander
-            with st.expander("Suggested questions", icon=":material/lightbulb:", expanded=len(st.session_state.stb_ai_chat_history) == 0):
-                sugg_cols_stb = st.columns(2)
-                clicked_suggestion_stb = None
-                for s_idx, s_text in enumerate(SoonToBenchAIAssistant.get_suggested_questions()):
-                    with sugg_cols_stb[s_idx % 2]:
-                        if st.button(s_text, key=f"btn_sugg_stb_{s_idx}", width="stretch"):
-                            clicked_suggestion_stb = s_text
-
-            # Clear Chat Action
-            if st.session_state.stb_ai_chat_history:
-                c_clear_space, c_clear_btn = st.columns([5, 1])
-                with c_clear_btn:
-                    if st.button("Clear chat", icon=":material/delete_sweep:", key="clear_chat_stb_btn", width="stretch"):
-                        st.session_state.stb_ai_chat_history = []
-                        st.rerun()
-
-            # Render Conversation Transcript
-            for chat_msg in st.session_state.stb_ai_chat_history:
-                with st.chat_message(chat_msg["role"]):
-                    st.markdown(chat_msg["content"])
-
-            # Chat Input Box
-            user_chat_query_stb = st.chat_input("Ask a question about soon-to-bench resources", key="stb_chat_input")
-            active_chat_query_stb = clicked_suggestion_stb or user_chat_query_stb
-
-            if active_chat_query_stb:
-                st.session_state.stb_ai_chat_history.append({"role": "user", "content": active_chat_query_stb})
-                with st.chat_message("user"):
-                    st.markdown(active_chat_query_stb)
-
-                with st.chat_message("assistant"):
-                    with st.spinner("Analyzing Soon To Bench records..."):
-                        ans_md = stb_ai_assistant.answer_question(active_chat_query_stb)["response"]
-                        st.markdown(ans_md)
-                        st.session_state.stb_ai_chat_history.append({"role": "assistant", "content": ans_md})
+        render_ai_assistant_tab(
+            assistant_class=SoonToBenchAIAssistant,
+            working_df=working_df_stb,
+            session_key="stb_ai_chat_history",
+            key_prefix="btn_sugg_stb",
+            source_csv="DST_SoonTobench.csv",
+            title="Soon To Bench Intelligence Assistant",
+            subtitle="Ask about upcoming releases, overdue end dates, levels, locations and counsellors.",
+            chat_placeholder="Ask a question about soon-to-bench resources",
+            spinner_text="Analyzing Soon To Bench records...",
+        )

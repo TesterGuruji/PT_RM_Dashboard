@@ -33,7 +33,7 @@ class PipelineAIAssistant:
         self.csv_path = csv_path
         self.raw_df = df if df is not None else self._load_csv(csv_path)
         self.llm_client = LLMClient()
-        self.parser = QueryParser(self.llm_client)
+        self.parser = QueryParser(self.llm_client, df=self.raw_df)
         self.executor = QueryExecutor(self.raw_df)
 
     def _load_csv(self, path: str) -> pd.DataFrame:
@@ -50,6 +50,7 @@ class PipelineAIAssistant:
         """Updates working DataFrame (e.g., when dashboard filter is active or cache is refreshed)."""
         self.raw_df = df.copy()
         self.executor = QueryExecutor(self.raw_df)
+        self.parser.update_dataframe(self.raw_df)
 
     def answer_question(self, user_question: str) -> Dict[str, Any]:
         """

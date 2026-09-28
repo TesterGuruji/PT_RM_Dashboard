@@ -3,7 +3,8 @@ Hybrid Query Parser: Fast Deterministic Rule-Based Matching + LLM Structured Que
 """
 
 import re
-from typing import Dict, Any, Optional
+import pandas as pd
+from typing import Dict, Any, List, Optional
 from .llm_client import LLMClient
 
 MONTH_NAMES = {
@@ -14,14 +15,21 @@ MONTH_NAMES = {
     "jul": "07", "aug": "08", "sep": "09", "sept": "09", "oct": "10", "nov": "11", "dec": "12"
 }
 
-SECTOR_LEADS = ["unassigned", "illairaja", "venkat", "gaurav", "siva", "lalitha"]
-RESOURCE_LEVELS = ["senior 3", "staff 1", "staff 2", "manager", "senior", "staff"]
-CLIENTS = ["xyz", "abc", "efg"]
-SECTORS = ["wam", "insurance", "ct"]
-
 class QueryParser:
-    def __init__(self, llm_client: Optional[LLMClient] = None):
+    def __init__(self, llm_client: Optional[LLMClient] = None, df: Optional[pd.DataFrame] = None):
         self.llm_client = llm_client or LLMClient()
+        self.df = df
+
+    def update_dataframe(self, df: Optional[pd.DataFrame]):
+        """Refreshes the vocabulary (leads/clients/levels/ids) the deterministic parser matches against."""
+        self.df = df
+
+    def _column_vocab(self, column: str) -> List[str]:
+        """Distinct lowercase values actually present in `column` today, excluding blanks/placeholders."""
+        if self.df is None or column not in self.df.columns:
+            return []
+        values = self.df[column].dropna().astype(str).str.strip()
+        return sorted({v.lower() for v in values if v and v.lower() != "unassigned"})
 
     def parse(self, question: str) -> Dict[str, Any]:
         """
@@ -247,9 +255,9 @@ class QueryParser:
         # -------------------------------------------------------------
         # 7. FILTERING / LISTING QUESTIONS
         # -------------------------------------------------------------
-        # 7a. Assigned to specific person (e.g. Venkat, Illairaja, Gaurav, Siva, Lalitha)
-        for lead in SECTOR_LEADS:
-            if lead in q_lower and lead != "unassigned":
+        # 7a. Assigned to a specific person (matched against Sector PT leads present in the data)
+        for lead in self._column_vocab("Sector PT lead"):
+            if lead in q_lower:
                 return {
                     "operation": "filter",
                     "filters": [{"column": "Sector PT lead", "operator": "equals", "value": lead.title()}],
@@ -264,8 +272,8 @@ class QueryParser:
                 "explanation": "All unassigned pipeline demands"
             }
 
-        # 7c. Demands for Client / Eng Name (e.g. EFG, XYZ, ABC)
-        for client in CLIENTS:
+        # 7c. Demands for a specific Client (matched against Client values present in the data)
+        for client in self._column_vocab("Client"):
             if client in q_lower:
                 filters = [{"column": "Client", "operator": "equals", "value": client.upper()}]
                 if "open" in q_lower:
@@ -276,8 +284,8 @@ class QueryParser:
                     "explanation": f"Demands for client {client.upper()}"
                 }
 
-        # 7d. Demands for Resource Level
-        for lvl in RESOURCE_LEVELS:
+        # 7d. Demands for a specific Resource Level (matched against levels present in the data)
+        for lvl in self._column_vocab("Resource Level"):
             if lvl in q_lower:
                 return {
                     "operation": "filter",
@@ -299,22 +307,45 @@ class QueryParser:
                 "explanation": "List all invalid demands"
             }
 
-        # 7f. Specific ID lookup (e.g. "demand 5678", "role 98765")
-        id_match = re.search(r"\b(98765|5678|2345|1234|3456)\b", q_lower)
-        if id_match:
-            role_id = id_match.group(1)
-            return {
-                "operation": "lookup",
-                "filters": [{"column": "Role ID", "operator": "equals", "value": role_id}],
-                "explanation": f"Lookup demand with ID {role_id}"
-            }
+        # 7f. Specific ID lookup: any numeric token in the question that matches a Role ID / Eng ID
+        # actually present in the data (not tied to any fixed set of demo IDs).
+        numeric_tokens = re.findall(r"\b\d+\b", q_lower)
+        if numeric_tokens:
+            for id_col in ("Role ID", "Eng ID"):
+                known_ids = set(self._column_vocab(id_col)) | (
+                    {v.split(".")[0] for v in self._column_vocab(id_col)}
+                )
+                for token in numeric_tokens:
+                    if token in known_ids:
+                        return {
+                            "operation": "lookup",
+                            "filters": [{"column": id_col, "operator": "equals", "value": token}],
+                            "explanation": f"Lookup demand with {id_col} {token}"
+                        }
 
-        # 7g. Specific date (e.g., July 14, 2026 or 2026-07-14)
-        if "july 14" in q_lower or "2026-07-14" in q_lower:
+        # 7g. Specific date (e.g., "July 14, 2026" or "2026-07-14")
+        iso_date_match = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", q_lower)
+        if iso_date_match:
             return {
                 "operation": "filter",
-                "filters": [{"column": "Start Date", "operator": "date_exact", "value": "2026-07-14"}],
-                "explanation": "Demands starting on July 14, 2026"
+                "filters": [{"column": "Start Date", "operator": "date_exact", "value": iso_date_match.group(1)}],
+                "explanation": f"Demands starting on {iso_date_match.group(1)}"
             }
+        month_names_pattern = "|".join(MONTH_NAMES.keys())
+        month_day_match = re.search(
+            rf"\b({month_names_pattern})\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s*(20\d{{2}})?\b", q_lower
+        )
+        if month_day_match:
+            month_word, day, year = month_day_match.groups()
+            year = year or "2026"
+            try:
+                iso_date = f"{year}-{MONTH_NAMES[month_word]}-{int(day):02d}"
+                return {
+                    "operation": "filter",
+                    "filters": [{"column": "Start Date", "operator": "date_exact", "value": iso_date}],
+                    "explanation": f"Demands starting on {iso_date}"
+                }
+            except ValueError:
+                pass
 
         return None
