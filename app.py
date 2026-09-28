@@ -4,8 +4,9 @@ import plotly.graph_objects as go
 import os
 from datetime import datetime
 from dotenv import load_dotenv
-from ai_assistant import PipelineAIAssistant, DSTBenchAIAssistant, SoonToBenchAIAssistant
+from ai_assistant import PipelineAIAssistant, DSTBenchAIAssistant, SoonToBenchAIAssistant, SkillsetMatrixAIAssistant
 from ai_assistant.soon_to_bench_assistant import RELEASE_WINDOWS, add_release_columns
+from ai_assistant.skillset_assistant import SKILL_COLUMNS, skill_level_counts, tool_resource_matrix, split_skill_cell
 from ai_assistant.llm_client import LLMClient
 
 load_dotenv()
@@ -123,6 +124,12 @@ FILES = {
         "path": "DST_SoonTobench.csv",
         "description": "Track resources whose engagements are ending, release dates, and who is due to join the bench next.",
         "cols": ["GPN", "Name", "Eng ID", "Eng Name", "Sector", "Start Date", "End Date", "Level", "Status", "Comments", "Location", "Counsellor Name"]
+    },
+    "Resource Skillset Matrix": {
+        "path": "Skillset_Matrix.csv",
+        "description": "Track certifications, performance test, observability and AI tool skills held by each resource.",
+        "cols": ["GPN", "Resource Name", "Resource Level", "Certifications", "Performance Test Tools",
+                 "Observability Tools", "AI Tools", "Others", "Location"]
     }
 }
 
@@ -314,6 +321,53 @@ def monthly_level_chart(df, date_col, level_col, noun):
     fig.update_layout(barmode="stack", legend_traceorder="normal")
     fig.update_xaxes(categoryorder="array", categoryarray=month_order)
     fig.update_yaxes(dtick=1, rangemode="tozero")
+    return fig
+
+
+def skill_level_chart(df, skill_col, level_col="Resource Level", noun="Resources"):
+    """Stacked bar: one bar per individual skill/tool/certification, stacked by resource level.
+    Each skill cell holds a comma-separated list, exploded via skill_level_counts."""
+    counts = skill_level_counts(df, skill_col, level_col)
+    if counts.empty:
+        return None
+    colors = level_color_map(counts[level_col])
+    skill_order = counts.groupby(skill_col)["Resources"].sum().sort_values(ascending=False).index.tolist()
+    fig = go.Figure()
+    for level, color in colors.items():
+        level_counts = counts[counts[level_col] == level]
+        if level_counts.empty:
+            continue
+        fig.add_bar(
+            x=level_counts[skill_col], y=level_counts["Resources"], name=level,
+            marker=dict(color=color, line=dict(color="#FFFFFF", width=2)),
+            hovertemplate=f"<b>%{{x}}</b><br>{level}: %{{y}} {noun.lower()}<extra></extra>",
+        )
+    style_figure(fig, height=300)
+    fig.update_layout(barmode="stack", legend_traceorder="normal")
+    fig.update_xaxes(categoryorder="array", categoryarray=skill_order, tickangle=-20)
+    fig.update_yaxes(dtick=1, rangemode="tozero")
+    return fig
+
+
+def ai_tool_heatmap_chart(df, tool_col="AI Tools", name_col="Resource Name"):
+    """Heatmap grid: AI tool name x resource name, highlighting which resource has which tool."""
+    matrix = tool_resource_matrix(df, tool_col, name_col)
+    if matrix.empty:
+        return None
+    fig = go.Figure(go.Heatmap(
+        z=matrix.values,
+        x=list(matrix.columns),
+        y=list(matrix.index),
+        colorscale=[[0, "#EBEEF3"], [1, CATEGORICAL_COLORS[0]]],
+        zmin=0, zmax=1,
+        showscale=False,
+        xgap=3, ygap=3,
+        hovertemplate="<b>%{y}</b> · %{x}: %{z}<extra></extra>",
+    ))
+    style_figure(fig, height=max(220, 46 * len(matrix.index) + 60))
+    fig.update_xaxes(showgrid=False, linecolor="rgba(0,0,0,0)", side="bottom", tickangle=-20)
+    fig.update_yaxes(showgrid=False, linecolor="rgba(0,0,0,0)", autorange="reversed")
+    fig.update_layout(margin=dict(l=4, r=16, t=8, b=8))
     return fig
 
 
@@ -1472,4 +1526,264 @@ elif selection == "DST Soon To Bench Resources":
             subtitle="Ask about upcoming releases, overdue end dates, levels, locations and counsellors.",
             chat_placeholder="Ask a question about soon-to-bench resources",
             spinner_text="Analyzing Soon To Bench records...",
+        )
+
+
+# =============================================================================
+# MODULE 4: RESOURCE SKILLSET MATRIX
+# =============================================================================
+elif selection == "Resource Skillset Matrix":
+    # The source CSV's header names may carry stray spaces; work with trimmed names
+    raw_df.columns = raw_df.columns.str.strip()
+
+    # -------------------------------------------------------------------------
+    # KPI STRIP
+    # -------------------------------------------------------------------------
+    if not raw_df.empty:
+        def _distinct_skill_count(col):
+            if col not in raw_df.columns:
+                return 0
+            return len({s for cell in raw_df[col] for s in split_skill_cell(cell)})
+
+        render_kpis([
+            {"label": "Resources tracked", "value": len(raw_df), "foot": "In the skillset matrix"},
+            {"label": "Certifications", "value": _distinct_skill_count("Certifications"), "foot": "Distinct certifications held"},
+            {"label": "Performance test tools", "value": _distinct_skill_count("Performance Test Tools"), "foot": "Distinct tools held"},
+            {"label": "Observability tools", "value": _distinct_skill_count("Observability Tools"), "foot": "Distinct tools held"},
+            {"label": "AI tools", "value": _distinct_skill_count("AI Tools"), "foot": "Distinct tools held"},
+        ])
+
+    tab_overview, tab_records, tab_ai = st.tabs([
+        ":material/monitoring: Overview", ":material/table_rows: Records", ":material/auto_awesome: AI Assistant"
+    ])
+
+    # -------------------------------------------------------------------------
+    # OVERVIEW: ANALYTICS
+    # -------------------------------------------------------------------------
+    with tab_overview:
+        if raw_df.empty:
+            st.markdown('<div class="empty-state"><b>No skillset records yet</b>Add records in the Records tab.</div>', unsafe_allow_html=True)
+        else:
+            chart_col1, chart_col2 = st.columns(2, gap="medium")
+            with chart_col1:
+                with st.container(border=True, key="card-skill-certs"):
+                    card_heading("Certifications by level", "Resources per certification, stacked by resource level")
+                    fig_certs = skill_level_chart(raw_df, "Certifications")
+                    if fig_certs is not None:
+                        show_chart(fig_certs)
+                    else:
+                        st.caption("No certification data to chart.")
+            with chart_col2:
+                with st.container(border=True, key="card-skill-pt"):
+                    card_heading("Performance test tools by level", "Resources per tool, stacked by resource level")
+                    fig_pt = skill_level_chart(raw_df, "Performance Test Tools")
+                    if fig_pt is not None:
+                        show_chart(fig_pt)
+                    else:
+                        st.caption("No performance test tool data to chart.")
+
+            chart_col3, chart_col4 = st.columns(2, gap="medium")
+            with chart_col3:
+                with st.container(border=True, key="card-skill-obs"):
+                    card_heading("Observability tools by level", "Resources per tool, stacked by resource level")
+                    fig_obs = skill_level_chart(raw_df, "Observability Tools")
+                    if fig_obs is not None:
+                        show_chart(fig_obs)
+                    else:
+                        st.caption("No observability tool data to chart.")
+            with chart_col4:
+                with st.container(border=True, key="card-skill-ai"):
+                    card_heading("AI tools by level", "Resources per tool, stacked by resource level")
+                    fig_ai = skill_level_chart(raw_df, "AI Tools")
+                    if fig_ai is not None:
+                        show_chart(fig_ai)
+                    else:
+                        st.caption("No AI tool data to chart.")
+
+            with st.container(border=True, key="card-skill-heatmap"):
+                card_heading("Trending AI tool adoption", "Which resource has which AI tool")
+                fig_heatmap = ai_tool_heatmap_chart(raw_df)
+                if fig_heatmap is not None:
+                    show_chart(fig_heatmap)
+                else:
+                    st.caption("No AI tool data to chart.")
+
+    with tab_records:
+        # -------------------------------------------------------------------------
+        # ADVANCED FILTER TOOLBAR & DATA CONTROLS
+        # -------------------------------------------------------------------------
+        with st.container(border=True, key="card-filters-skill"):
+            f_c1, f_c2, f_c3 = st.columns([2, 1, 1])
+
+            with f_c1:
+                search_query_skill = st.text_input(
+                    "Search",
+                    placeholder="Search name, level, certification, tool or location",
+                    label_visibility="collapsed",
+                    icon=":material/search:",
+                    key="search_query_skill"
+                )
+
+            with f_c2:
+                level_options_skill = ["All Levels"]
+                if 'Resource Level' in raw_df.columns:
+                    unique_levels_skill = sorted([l for l in raw_df['Resource Level'].dropna().unique() if l != 'Unassigned'])
+                    level_options_skill.extend(unique_levels_skill)
+                selected_level_skill = st.selectbox("Resource Level Filter", level_options_skill, label_visibility="collapsed", key="level_skill")
+
+            with f_c3:
+                location_options_skill = ["All Locations"]
+                if 'Location' in raw_df.columns:
+                    unique_locations_skill = sorted([loc for loc in raw_df['Location'].dropna().unique() if loc != 'Unassigned'])
+                    location_options_skill.extend(unique_locations_skill)
+                selected_location_skill = st.selectbox("Location Filter", location_options_skill, label_visibility="collapsed", key="loc_skill")
+
+        # Apply Active Filters
+        display_df = raw_df.copy()
+
+        # Enforce explicit data types across schema
+        for col in display_df.columns:
+            if col == 'GPN':
+                display_df[col] = pd.to_numeric(display_df[col], errors='coerce').astype('Int64')
+            else:
+                display_df[col] = display_df[col].astype(str).str.strip()
+
+        # 1. Global Text Filter
+        if search_query_skill and not display_df.empty:
+            mask = display_df.apply(lambda row: row.astype(str).str.contains(search_query_skill, case=False, na=False, regex=False).any(), axis=1)
+            display_df = display_df[mask]
+
+        # 2. Resource Level Filter
+        if selected_level_skill != "All Levels" and 'Resource Level' in display_df.columns:
+            display_df = display_df[display_df['Resource Level'].astype(str).str.strip() == selected_level_skill.strip()]
+
+        # 3. Location Filter
+        if selected_location_skill != "All Locations" and 'Location' in display_df.columns:
+            display_df = display_df[display_df['Location'].astype(str).str.strip().str.lower() == selected_location_skill.strip().lower()]
+
+        # Filter Status & Action Bar
+        ctrl_left, ctrl_right = st.columns([2, 1.5], vertical_alignment="center")
+
+        with ctrl_left:
+            active_filters = [f for f in (selected_level_skill, selected_location_skill) if not f.startswith("All ")]
+            if search_query_skill:
+                active_filters.insert(0, f'"{search_query_skill}"')
+            filter_note = f'<span class="filter-note">Filtered by {", ".join(active_filters)}</span>' if active_filters else ""
+            st.markdown(f'<span class="result-pill">{len(display_df)} of {len(raw_df)} resources</span>{filter_note}', unsafe_allow_html=True)
+
+        with ctrl_right:
+            btn_col1, btn_col2 = st.columns([1, 1])
+            with btn_col1:
+                edit_mode_skill = st.toggle("Edit mode", value=False, help="Edit cells inline, add rows at the bottom, or mark rows for deletion", key="edit_mode_skill")
+            with btn_col2:
+                if not display_df.empty:
+                    export_df = display_df.drop(columns=['🗑️ Delete Row'], errors='ignore')
+                    st.download_button(
+                        label="Export CSV",
+                        icon=":material/download:",
+                        data=export_df.to_csv(index=False).encode('utf-8'),
+                        file_name=f"skillset_matrix_export_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv",
+                        width="stretch",
+                        key="export_skill_btn"
+                    )
+
+        # -------------------------------------------------------------------------
+        # MAIN DATA TABLE & EDITOR
+        # -------------------------------------------------------------------------
+        if edit_mode_skill:
+            st.markdown(
+                '<div class="notice notice-warning"><strong>Edit mode is on.</strong> Double-click a cell to change it, '
+                'add rows at the bottom of the table, or tick <em>Delete Row</em> to remove a record. Skill columns take '
+                'a comma-separated list (e.g. "JMeter, LoadRunner"). Changes are written to the source file only when you '
+                'select <strong>Save changes</strong>.</div>',
+                unsafe_allow_html=True)
+
+        if not display_df.empty or raw_df.empty:
+            editor_key_skill = f"editor_{selection}"
+
+            col_config_skill = {}
+            for col in display_df.columns:
+                if col == 'GPN':
+                    col_config_skill[col] = st.column_config.NumberColumn(col, format="%d", min_value=0, step=1)
+                elif col == 'Resource Level' and edit_mode_skill:
+                    col_config_skill[col] = st.column_config.SelectboxColumn(
+                        col, help="Seniority Level",
+                        options=["Staff 1", "Staff 2", "Senior 1", "Senior 2", "Senior 3", "Manager", "Senior Manager", "Associate Director", "Director"]
+                    )
+                elif col == 'Location' and edit_mode_skill:
+                    col_config_skill[col] = st.column_config.SelectboxColumn(
+                        col, help="Office Location",
+                        options=["Noida", "Bengaluru", "Pune", "Gurugram", "Hyderabad", "Chennai", "Kolkata", "Kochi", "Trivandrum", "Coimbatore"]
+                    )
+                elif col in SKILL_COLUMNS:
+                    col_config_skill[col] = st.column_config.TextColumn(col, help='Comma-separated list, e.g. "JMeter, LoadRunner"')
+                elif col != '🗑️ Delete Row':
+                    col_config_skill[col] = st.column_config.TextColumn(col)
+
+            if edit_mode_skill:
+                if not display_df.empty and '🗑️ Delete Row' not in display_df.columns:
+                    display_df.insert(0, '🗑️ Delete Row', False)
+                st.data_editor(
+                    display_df,
+                    width="stretch",
+                    height=380,
+                    num_rows="dynamic",
+                    hide_index=True,
+                    key=editor_key_skill,
+                    column_config=col_config_skill
+                )
+            else:
+                st.dataframe(
+                    display_df,
+                    width="stretch",
+                    height=380,
+                    hide_index=True,
+                    column_config=col_config_skill
+                )
+
+            # Edit State Handling & Save Serialization
+            editor_state_skill = st.session_state.get(editor_key_skill, {})
+            has_changes_skill = edit_mode_skill and any(len(v) > 0 for v in editor_state_skill.values() if isinstance(v, (dict, list)))
+
+            if has_changes_skill:
+                st.warning("You have unsaved changes in the table above.", icon=":material/edit_note:")
+                if st.button("Save changes", icon=":material/save:", width="stretch", type="primary", key="save_skill_btn"):
+                    if save_editor_changes(raw_df, display_df, editor_state_skill, file_path, expected_cols, loaded_mtime, strip_headers=True):
+                        st.rerun()
+        else:
+            st.markdown('<div class="empty-state"><b>No matching resources</b>Adjust or clear the search and filters above.</div>', unsafe_allow_html=True)
+
+    with tab_ai:
+        # -------------------------------------------------------------------------
+        # SKILLSET MATRIX AI ASSISTANT
+        # -------------------------------------------------------------------------
+        # Contextual data detection
+        is_filtered_skill = (search_query_skill != "" or selected_level_skill != "All Levels" or selected_location_skill != "All Locations") and not display_df.empty
+
+        if is_filtered_skill:
+            st.markdown(f"""
+            <div class="notice notice-info">
+                <strong>Filtered view:</strong> answers use only the current filter selection (<strong>{len(display_df)}</strong> matching resources).
+            </div>
+            """, unsafe_allow_html=True)
+            working_df_skill = raw_df.loc[display_df.index]
+        else:
+            st.markdown(f"""
+            <div class="notice notice-neutral">
+                <strong>Full dataset:</strong> answers cover all <strong>{len(raw_df)}</strong> skillset matrix records.
+            </div>
+            """, unsafe_allow_html=True)
+            working_df_skill = raw_df.copy()
+
+        render_ai_assistant_tab(
+            assistant_class=SkillsetMatrixAIAssistant,
+            working_df=working_df_skill,
+            session_key="skill_ai_chat_history",
+            key_prefix="btn_sugg_skill",
+            source_csv="Skillset_Matrix.csv",
+            title="Skillset Matrix Intelligence Assistant",
+            subtitle="Ask about certifications, tools, resource levels and locations — grounded strictly in Skillset_Matrix.csv.",
+            chat_placeholder="Ask a question about the skillset matrix",
+            spinner_text="Analyzing Skillset Matrix records...",
         )

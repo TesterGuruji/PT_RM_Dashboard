@@ -1,0 +1,21 @@
+GPN,Resource Name,Resource Level,Certifications,Performance Test Tools,Observability Tools, AI Tools, Others, Location
+111,Vaibhav,Senior 3,"CTPT,CTAI,Github Copilot,AB730","LR, JMeter, K6, Neoload","Grafana, Datadog, Dynatrace","ChatGPT, Claude, GithuCopilot","Wiremock, KIRO",Noida
+112,Alfred,Senior 3,"CTPT,ISTQB","JMeter, K6","Grafana, Dynatrace","ChatGPT, Claude",Postman,Bengaluru
+113,Satish,Staff 2,"CTAI,AB730","LR, Neoload",Datadog,ChatGPT,,Chennai
+114,Venkat,Manager,"PMP,CTPT","JMeter, Gatling","Grafana, Splunk","Claude, Gemini",Wiremock,Chennai
+115,Lalitha,Staff 2,CTAI,"K6, Neoload",Dynatrace,"ChatGPT, GithuCopilot",KIRO,Kochi
+116,Abhjith,Staff 1,AB730,JMeter,Grafana,ChatGPT,,Gurugram
+117,Dinesh,Senior 2,"CTPT,ISTQB,AWS Certified","LR, K6, Gatling","Datadog, New Relic","Claude, Gemini","Postman, SoapUI",Pune
+118,Gaurav,Senior 1,"CTAI,CTPT","JMeter, Neoload","Grafana, Dynatrace","ChatGPT, Claude",Wiremock,Gurugram
+119,Umang,Manager,"PMP,AWS Certified","LR, Gatling",Splunk,Gemini,,Hyderabad
+120,Achin,Manager,PMP,"LR, JMeter","Grafana, Datadog",ChatGPT,Wiremock,Trivandrum
+121,Saloni Kaushik,Staff 1,"AB730,ISTQB",K6,Dynatrace,Claude,,Coimbatore
+122,Siva,Manager,"CTPT,PMP","Neoload, Gatling","Splunk, New Relic","Gemini, ChatGPT",Postman,Bengaluru
+123,Illairaja,Senior 3,"CTAI,AWS Certified","LR, JMeter, K6","Grafana, Dynatrace, Datadog","ChatGPT, Claude, GithuCopilot","KIRO, SoapUI",Noida
+124,Priya,Senior 1,CTPT,"JMeter, Neoload",Grafana,Claude,,Hyderabad
+125,Ramesh,Staff 2,AB730,"K6, Gatling",Datadog,ChatGPT,Wiremock,Kolkata
+126,Anjali,Senior 2,"CTAI,CTPT,ISTQB","LR, Neoload","Dynatrace, Splunk","Gemini, Claude",Postman,Pune
+127,Karthik,Director,"PMP,AWS Certified,Six Sigma","JMeter, K6, Gatling","Grafana, Datadog, New Relic","ChatGPT, Claude, Gemini","Wiremock, KIRO",Bengaluru
+128,Neha,Staff 1,AB730,JMeter,Grafana,ChatGPT,,Noida
+129,Suresh,Senior Manager,"PMP,CTPT","LR, Gatling","Splunk, Dynatrace","Claude, Gemini",SoapUI,Chennai
+130,Divya,Associate Director,"AWS Certified,Six Sigma,PMP","Neoload, K6","New Relic, Datadog","ChatGPT, GithuCopilot","Postman, Wiremock",Gurugram
