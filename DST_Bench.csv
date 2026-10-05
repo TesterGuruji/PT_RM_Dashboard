@@ -1,5 +1,8 @@
-GPN,Name,Resource Level,Status,Bench Days,Last Project Release Date,Last Project Name,Additional Comments,Location,Cousellor Name
-12423412,Vaibhav,Staff 1,Profile Shared,10,12/1/2026,google,Awaiting confirmation,Noida,Venkat
-1234567,Siva,Manager,Onboarding Started,20,12/17/2026,ABC,Awaiting billing confirmation,Bengaluru,Dev
-1234,Alfred,Senior 3,Billing Started,30,10/1/2026,CT,On bench,Pune,Dinesh
-5677899,Alfred,Senior 3,Awaiting Engagement,30,10/1/2026,CT,On bench,Pune,Dinesh
+GPN,Name,Resource Level,Status,Last Project Release Date,Last Project Name,Additional Comments,Location,Cousellor Name
+VN010140431,Ganesh,Staff 1,Confirmed,8/1/2026,CT project,Awaiting billing start date,Chennai,Vinayakumar
+VN010140432,George,Staff 2,Awaiting Engagement,9/14/2026,Morgan Stanley,Yet to share for engagement,Chennai,Arathy
+VN010140433,Saloni,Staff 3,Not Available,9/17/2026,Herbalife,Maternity Leave,Pune,Achin
+VN010140434,Aditi Seal,Senior 1,Profile Shared,9/1/2026,TCS,Profile Shared for tech mahindra,Kolkata,Abhjith
+VN010140435,Aditi Seal,Senior 2,Profile Shared,9/1/2026,TCS,Profile Shared for tech mahindra,Kolkata,Abhjith
+VN010140436,Tony,Senior 3,Awaiting Engagement,9/2/2026,Tech Mahindra,On bench,Kochi,Dinesh
+VN010140437,Venkat,Manager,Confirmed,9/12/2026,Tech Mahindra,Awaiting Billing start Date for GW,Chennai,Devnath

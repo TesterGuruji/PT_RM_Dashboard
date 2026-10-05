@@ -7,6 +7,7 @@ from .assistant import PipelineAIAssistant, ask_pipeline_assistant
 from .dst_assistant import DSTBenchAIAssistant, ask_dst_bench_assistant
 from .soon_to_bench_assistant import SoonToBenchAIAssistant, ask_soon_to_bench_assistant
 from .skillset_assistant import SkillsetMatrixAIAssistant, ask_skillset_assistant
+from .resource_suggester import ResourceSuggester
 
 __all__ = [
     "PipelineAIAssistant",
@@ -16,5 +17,6 @@ __all__ = [
     "SoonToBenchAIAssistant",
     "ask_soon_to_bench_assistant",
     "SkillsetMatrixAIAssistant",
-    "ask_skillset_assistant"
+    "ask_skillset_assistant",
+    "ResourceSuggester"
 ]

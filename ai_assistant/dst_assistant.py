@@ -6,12 +6,27 @@ Orchestrates query parsing, safe pandas execution, and response synthesis for DS
 import os
 import re
 import pandas as pd
+from datetime import date
 from typing import Dict, Any, List, Optional
 from .llm_client import LLMClient
 
 DEFAULT_DST_CSV_PATH = "DST_Bench.csv"
 DST_FALLBACK_MESSAGE = "I couldn't find enough information in the DST Bench data to answer that question."
 DST_SOURCE_CITATION = "📊 Source: DST_Bench.csv"
+
+
+def add_bench_age_column(df: pd.DataFrame, today: Optional[date] = None) -> pd.DataFrame:
+    """Adds a 'Bench Days' column computed as days since 'Last Project Release Date' (never stored in
+    the CSV - the source of truth is the release date, not a static counter that drifts out of date)."""
+    today = pd.Timestamp(today or date.today())
+    out = df.copy()
+    if "Last Project Release Date" in out.columns:
+        release = pd.to_datetime(out["Last Project Release Date"], errors="coerce")
+        out["Bench Days"] = (today - release).dt.days.astype("Int64")
+    else:
+        out["Bench Days"] = pd.NA
+    return out
+
 
 def dataframe_to_markdown(df: pd.DataFrame) -> str:
     """Pure-python markdown table generator (zero extra dependencies)."""
@@ -63,14 +78,17 @@ class DSTBenchAIAssistant:
                 "status": "empty_csv"
             }
 
+        # Bench Days is computed from Last Project Release Date, not read from the CSV
+        df_with_age = add_bench_age_column(self.raw_df)
+
         # 1. Primary Path: Direct LLM Grounded Synthesis using file data
         if self.llm_client.is_available():
             try:
                 llm_response = self.llm_client.generate_grounded_answer(
                     user_question=clean_q,
-                    df=self.raw_df,
+                    df=df_with_age,
                     source_name="DST_Bench.csv",
-                    dataset_description="Performance test bench resources, bench aging duration, release timelines, locations, and counsellor allocations."
+                    dataset_description="Performance test bench resources, bench aging duration (computed as days since Last Project Release Date), release timelines, locations, and counsellor allocations."
                 )
                 if llm_response:
                     return {
@@ -85,7 +103,7 @@ class DSTBenchAIAssistant:
 
         # 2. Fallback Path: Deterministic Evaluation
         notice = self.llm_client.unavailable_notice()
-        fast_res = self._eval_deterministic(clean_q)
+        fast_res = self._eval_deterministic(clean_q, df_with_age)
         if fast_res is not None:
             if notice:
                 fast_res["response"] = f"{notice}\n\n{fast_res['response']}"
@@ -100,9 +118,8 @@ class DSTBenchAIAssistant:
             "chart_data": None
         }
 
-    def _eval_deterministic(self, q: str) -> Optional[Dict[str, Any]]:
-        """Evaluates question deterministically using pandas."""
-        df = self.raw_df.copy()
+    def _eval_deterministic(self, q: str, df: pd.DataFrame) -> Optional[Dict[str, Any]]:
+        """Evaluates question deterministically using pandas. df already has the computed 'Bench Days' column."""
         q_lower = q.lower().strip()
 
         # Out-of-domain guard
@@ -154,10 +171,9 @@ class DSTBenchAIAssistant:
         # 2. Status Specific Queries (Counts & Lists)
         status_map = {
             "profile shared": "Profile Shared",
-            "onboarding": "Onboarding Started",
-            "onboarding started": "Onboarding Started",
-            "billing": "Billing Started",
-            "billing started": "Billing Started",
+            "confirmed": "Confirmed",
+            "not available": "Not Available",
+            "unavailable": "Not Available",
             "awaiting engagement": "Awaiting Engagement",
             "awaiting": "Awaiting Engagement"
         }

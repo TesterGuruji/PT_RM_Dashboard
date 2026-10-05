@@ -1,12 +1,12 @@
 Role ID,Eng ID,Eng Name,Sector,Sector PT lead,Client,Start Date,Resource Level,Comments,Status
-98765,98765,XYZ,WAM,Unassigned,XYZ,2026-12-09,Senior 3,Project comments,Awaiting Confirmation
-2345,1234,ABC,Insurance,Unassigned,ABC,2026-03-12,Manager,Project comments 1,Open
-5678,3456,EFG,CT,Unassigned,EFG,2026-08-05,Staff 1,Project comments,Fulfilled
-5678,3456,EFG,CT,Unassigned,EFG,2026-08-06,Staff 2,Project comments,Fulfilled
-5678,3456,EFG,CT,Unassigned,EFG,2026-09-30,Staff 2,Project comments,Invalid
-5678,3456,EFG,CT,Illairaja,EFG,2026-09-10,Staff 2,Project comments,Invalid
-5678,3456,EFG,BCM,Venkat,EFG,2026-07-14,Staff 2,Project comments,Open
-5678,3456,EFG,Commercial,Gaurav,EFG,2026-07-14,Manager,Project comments,Awaiting Confirmation
-5678,3456,EFG,CT,Siva,EFG,2026-07-14,Senior 3,Project comments,Fulfilled
-5678,3456,EFG,CT,Lalitha,EFG,2026-07-14,Senior 3,Project comments,Open
-5678,3456,EFG,CT,Unassigned,EFG,2026-07-14,Senior 3,Project comments,Invalid
+98765,98765,Google,WAM,Unassigned,Google,2026-12-09,Senior 3,Needs K6 and Grafana for performance testing,Awaiting Confirmation
+2345,1234,Apple,Insurance,Unassigned,Apple,2026-03-12,Manager,Looking for JMeter and Datadog experience,Open
+5678,3456,OpenAI,CT,Unassigned,OpenAI,2026-08-05,Staff 1,Requires LR and Dynatrace skills,Fulfilled
+5678,3456,TCS,CT,Unassigned,TCS,2026-08-06,Staff 2,Needs Neoload and Splunk knowledge,Fulfilled
+5678,3456,PWC,CT,Unassigned,PWC,2026-09-30,Staff 2,Client wants ChatGPT and Claude familiarity,Invalid
+5678,3456,Capgemini,CT,Illairaja,Capgemini,2026-09-10,Staff 2,Must have CTPT certification and JMeter,Invalid
+5678,3456,Broadridge,BCM,Venkat,Broadridge,2026-07-14,Staff 2,Requires Gatling and New Relic experience,Open
+5678,3456,AON,Commercial,Gaurav,AON,2026-07-14,Manager,Needs PMP certification and AWS Certified,Awaiting Confirmation
+5678,3456,TCS,CT,Siva,TCS,2026-07-14,Senior 3,Looking for K6 and Dynatrace skills,Fulfilled
+5678,3456,Infosys,CT,Lalitha,Infosys,2026-07-14,Senior 3,Requires ISTQB and Grafana experience,Open
+5678,3456,TRP,CT,Unassigned,EFG,2026-07-14,Senior 3,Needs Gemini and Postman knowledge,Invalid

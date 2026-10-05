@@ -4,8 +4,9 @@ import plotly.graph_objects as go
 import os
 from datetime import datetime
 from dotenv import load_dotenv
-from ai_assistant import PipelineAIAssistant, DSTBenchAIAssistant, SoonToBenchAIAssistant, SkillsetMatrixAIAssistant
+from ai_assistant import PipelineAIAssistant, DSTBenchAIAssistant, SoonToBenchAIAssistant, SkillsetMatrixAIAssistant, ResourceSuggester
 from ai_assistant.soon_to_bench_assistant import RELEASE_WINDOWS, add_release_columns
+from ai_assistant.dst_assistant import add_bench_age_column
 from ai_assistant.skillset_assistant import SKILL_COLUMNS, skill_level_counts, tool_resource_matrix, split_skill_cell
 from ai_assistant.llm_client import LLMClient
 
@@ -118,7 +119,7 @@ FILES = {
     "DST Bench Resources": {
         "path": "DST_Bench.csv",
         "description": "Monitor performance test bench resources, bench duration, release timelines, locations, and counsellor allocations.",
-        "cols": ["GPN", "Name", "Resource Level", "Status", "Bench Days", "Last Project Release Date", "Last Project Name", "Additional Comments", "Location", "Cousellor Name"]
+        "cols": ["GPN", "Name", "Resource Level", "Status", "Last Project Release Date", "Last Project Name", "Additional Comments", "Location", "Cousellor Name"]
     },
     "DST Soon To Bench Resources": {
         "path": "DST_SoonTobench.csv",
@@ -191,20 +192,20 @@ def restore_integer_columns(df):
 CATEGORICAL_COLORS = ["#2A78D6", "#EB6834", "#1BAF7A", "#EDA100", "#E87BA4", "#008300", "#4A3AA7", "#E34948"]
 OTHER_COLOR = "#A3ACB9"
 STATUS_COLORS = {"good": "#0CA30C", "warning": "#FAB219", "serious": "#EC835A", "critical": "#D03B3B"}
-LEVEL_ORDER = ["Analyst", "Staff 1", "Staff 2", "Staff", "Senior 1", "Senior 2", "Senior 3", "Senior",
+LEVEL_ORDER = ["Analyst", "Staff 1", "Staff 2", "Staff 3", "Senior 1", "Senior 2", "Senior 3", "Senior",
                "Manager", "Senior Manager", "Associate Director", "Director"]
 # One fixed colour per resource level everywhere in the app; unlisted levels fold to grey
-LEVEL_COLORS = {"Staff 1": CATEGORICAL_COLORS[0], "Staff 2": CATEGORICAL_COLORS[1], "Senior 3": CATEGORICAL_COLORS[2],
-                "Manager": CATEGORICAL_COLORS[3], "Senior 1": CATEGORICAL_COLORS[4], "Senior Manager": CATEGORICAL_COLORS[5],
-                "Senior 2": CATEGORICAL_COLORS[6], "Director": CATEGORICAL_COLORS[7]}
+LEVEL_COLORS = {"Staff 1": CATEGORICAL_COLORS[0], "Staff 2": CATEGORICAL_COLORS[1], "Staff 3": CATEGORICAL_COLORS[2], "Senior 3": CATEGORICAL_COLORS[3],
+                "Manager": CATEGORICAL_COLORS[4], "Senior 1": CATEGORICAL_COLORS[5], "Senior Manager": CATEGORICAL_COLORS[6],
+                "Senior 2": CATEGORICAL_COLORS[7]}
 
 PIPELINE_STATUS_ORDER = ["Open", "Awaiting Confirmation", "Fulfilled", "Invalid"]
 PIPELINE_STATUS_COLORS = {"Open": "#2A78D6", "Awaiting Confirmation": STATUS_COLORS["warning"],
                           "Fulfilled": STATUS_COLORS["good"], "Invalid": STATUS_COLORS["critical"]}
-# Bench lifecycle is ordered, so it uses a single-hue ramp from light (early) to dark (billing)
-DST_STATUS_ORDER = ["Awaiting Engagement", "Profile Shared", "Onboarding Started", "Billing Started"]
+# Bench lifecycle: idle -> in review -> placed, plus a separate "can't be used" exception status
+DST_STATUS_ORDER = ["Awaiting Engagement", "Profile Shared", "Confirmed", "Not Available"]
 DST_STATUS_COLORS = {"Awaiting Engagement": "#86B6EF", "Profile Shared": "#5598E7",
-                     "Onboarding Started": "#2A78D6", "Billing Started": "#1C5CAB"}
+                     "Confirmed": STATUS_COLORS["good"], "Not Available": STATUS_COLORS["critical"]}
 
 
 def render_page_header(breadcrumb, title, subtitle, chips):
@@ -372,23 +373,34 @@ def ai_tool_heatmap_chart(df, tool_col="AI Tools", name_col="Resource Name"):
 
 
 def bench_aging_chart(df, days_col, name_col, id_col):
-    """Horizontal bars of bench days per resource, longest first; returns None without numeric data."""
+    """Horizontal bars of bench days per resource, longest first; returns None without numeric data.
+    Bench Days is computed from Last Project Release Date, so a negative value means that date is
+    still in the future (not actually released to the bench yet) - handled the same way
+    release_alert_chart handles overdue (negative) values."""
     aging = df[[name_col, id_col]].copy()
     aging["days"] = pd.to_numeric(df[days_col], errors="coerce")
     aging = aging.dropna(subset=["days"]).sort_values("days", ascending=False)
     if aging.empty:
         return None
     aging["label"] = aging[name_col].astype(str) + "  ·  " + aging[id_col].astype(str)
+    text = aging["days"].apply(lambda d: f"{int(d)} days" if d >= 0 else f"releases in {int(-d)}d")
     fig = go.Figure(go.Bar(
         x=aging["days"], y=aging["label"], orientation="h",
         marker=dict(color=CATEGORICAL_COLORS[0], line=dict(width=0)),
-        text=aging["days"].astype(int).astype(str) + " days", textposition="outside",
+        text=text, textposition="outside",
         textfont=dict(color="#33415C", size=12), cliponaxis=False,
         hovertemplate="<b>%{y}</b><br>Bench days: %{x}<extra></extra>",
     ))
     style_figure(fig, height=max(200, 44 * len(aging) + 40))
     fig.update_yaxes(autorange="reversed", gridcolor="rgba(0,0,0,0)", tickfont=dict(color="#33415C", size=12))
-    fig.update_xaxes(showticklabels=False, showline=False, range=[0, aging["days"].max() * 1.3])
+    # A minimum 10-day span keeps small values from filling the plot; outside labels need extra room
+    # to the left when any value is negative (not-yet-released), mirroring release_alert_chart.
+    span = max(abs(aging["days"].min()), abs(aging["days"].max()), 10)
+    fig.update_xaxes(showticklabels=False, showline=False,
+                     range=[min(0, aging["days"].min()) - span * (1.5 if aging["days"].min() < 0 else 0.1),
+                            max(0, aging["days"].max()) + span * 0.3])
+    if aging["days"].min() < 0:
+        fig.add_vline(x=0, line_width=1, line_color="#33415C")
     fig.update_layout(bargap=0.4, showlegend=False)
     return fig
 
@@ -692,8 +704,9 @@ if selection == "Pipeline Demands":
              "foot": f"{pct(unassigned_leads, total_demands)} of all demands"},
         ])
 
-    tab_overview, tab_records, tab_ai = st.tabs([
-        ":material/monitoring: Overview", ":material/table_rows: Records", ":material/auto_awesome: AI Assistant"
+    tab_overview, tab_records, tab_suggestions, tab_ai = st.tabs([
+        ":material/monitoring: Overview", ":material/table_rows: Records",
+        ":material/person_search: Suggestions", ":material/auto_awesome: AI Assistant"
     ])
 
     # -------------------------------------------------------------------------
@@ -766,11 +779,9 @@ if selection == "Pipeline Demands":
         # Apply Active Filters
         display_df = raw_df.copy()
 
-        # Enforce explicit data types across schema per constraints
+        # Enforce explicit data types across schema per constraints (Role ID / Eng ID are alphanumeric)
         for col in display_df.columns:
-            if col in ['GUI', 'GPN']:
-                display_df[col] = pd.to_numeric(display_df[col], errors='coerce').fillna(0).astype(int)
-            elif 'Date' in col:
+            if 'Date' in col:
                 display_df[col] = pd.to_datetime(display_df[col], errors='coerce').dt.date
             else:
                 display_df[col] = display_df[col].astype(str)
@@ -838,9 +849,7 @@ if selection == "Pipeline Demands":
             # Setup structured column configuration
             col_config = {}
             for col in display_df.columns:
-                if col in ['GUI', 'GPN', 'Role ID', 'Eng ID']:
-                    col_config[col] = st.column_config.NumberColumn(col, format="%d", min_value=0, step=1)
-                elif 'Date' in col:
+                if 'Date' in col:
                     col_config[col] = st.column_config.DateColumn(col, format="MM/DD/YYYY")
                 elif col == 'Status':
                     col_config[col] = st.column_config.SelectboxColumn(
@@ -892,6 +901,86 @@ if selection == "Pipeline Demands":
         else:
             st.markdown('<div class="empty-state"><b>No matching demands</b>Adjust or clear the search and filters above.</div>', unsafe_allow_html=True)
 
+    with tab_suggestions:
+        # -------------------------------------------------------------------------
+        # RESOURCE SUGGESTIONS
+        # For each demand: extract required skills from its Comments, match against
+        # Skillset_Matrix.csv, then rank by skill match / resource level / bench availability.
+        # -------------------------------------------------------------------------
+        if raw_df.empty:
+            st.markdown('<div class="empty-state"><b>No pipeline demands yet</b>Add records in the Records tab.</div>', unsafe_allow_html=True)
+        else:
+            skillset_cfg = FILES["Resource Skillset Matrix"]
+            bench_cfg = FILES["DST Bench Resources"]
+            soon_cfg = FILES["DST Soon To Bench Resources"]
+
+            skillset_sugg_df = load_data(skillset_cfg["path"], skillset_cfg["cols"],
+                                          os.path.getmtime(skillset_cfg["path"]) if os.path.exists(skillset_cfg["path"]) else None)
+            skillset_sugg_df.columns = skillset_sugg_df.columns.str.strip()
+            bench_sugg_df = load_data(bench_cfg["path"], bench_cfg["cols"],
+                                       os.path.getmtime(bench_cfg["path"]) if os.path.exists(bench_cfg["path"]) else None)
+            soon_sugg_raw = load_data(soon_cfg["path"], soon_cfg["cols"],
+                                       os.path.getmtime(soon_cfg["path"]) if os.path.exists(soon_cfg["path"]) else None)
+            soon_sugg_raw.columns = soon_sugg_raw.columns.str.strip()
+            soon_sugg_df = add_release_columns(soon_sugg_raw)
+
+            st.markdown(
+                '<div class="notice notice-neutral">Matches each demand\'s Comments against '
+                '<strong>Skillset_Matrix.csv</strong>, then ranks candidates by skill match, resource level and '
+                'current availability from <strong>DST_Bench.csv</strong> / <strong>DST_SoonTobench.csv</strong>. '
+                'Deterministic - no AI call, so it always runs instantly and for free.</div>',
+                unsafe_allow_html=True)
+
+            suggester = ResourceSuggester(skillset_sugg_df, bench_sugg_df, soon_sugg_df)
+
+            only_open = st.toggle("Only show Open / Awaiting Confirmation demands", value=True, key="suggestions_only_open")
+            if only_open and "Status" in raw_df.columns:
+                sugg_source_df = raw_df[raw_df["Status"].astype(str).str.strip().str.upper().isin(["OPEN", "AWAITING CONFIRMATION"])]
+            else:
+                sugg_source_df = raw_df
+
+            with st.container(border=True, key="card-suggestions-summary"):
+                card_heading("Top suggestion per demand", f"{len(sugg_source_df)} demand(s) matched against {len(skillset_sugg_df)} tracked resource(s)")
+                if sugg_source_df.empty:
+                    st.caption("No demands match the current filter.")
+                else:
+                    summary_df = suggester.suggest_for_all(sugg_source_df, top_n=3)
+                    st.dataframe(summary_df, width="stretch", height=min(380, 46 * len(summary_df) + 40), hide_index=True)
+
+            if not sugg_source_df.empty:
+                with st.container(border=True, key="card-suggestions-detail"):
+                    card_heading("Suggestion detail", "Pick a demand to see its full ranked candidate list")
+
+                    def _demand_label(idx):
+                        row = sugg_source_df.loc[idx]
+                        return (f"Role {row.get('Role ID')} · {row.get('Sector')}/{row.get('Client')} · "
+                                f"{row.get('Resource Level')} · {row.get('Status')} · starts {row.get('Start Date')}")
+
+                    selected_idx = st.selectbox(
+                        "Choose a demand", options=list(sugg_source_df.index),
+                        format_func=_demand_label, label_visibility="collapsed", key="suggestions_demand_picker"
+                    )
+                    demand_row = sugg_source_df.loc[selected_idx]
+                    result = suggester.suggest_for_demand(demand_row, top_n=5)
+
+                    st.markdown(f"**Comments:** {demand_row.get('Comments')}")
+                    if result["required_skills"]:
+                        st.markdown(f"**Detected requirement:** {', '.join(result['required_skills'])}")
+                    if result["note"]:
+                        st.caption(result["note"])
+
+                    if not result["suggestions"]:
+                        st.caption("No candidate resources found in the skillset matrix.")
+                    else:
+                        detail_rows = [{
+                            "Resource": s["resource_name"], "GPN": s["gpn"], "Level": s["resource_level"],
+                            "Matched Skills": ", ".join(s["matched_skills"]) if s["matched_skills"] else "-",
+                            "Level Match": "✓" if s["level_match"] else "",
+                            "Availability": s["availability_status"],
+                            "Detail": s["availability_detail"],
+                        } for s in result["suggestions"]]
+                        st.dataframe(pd.DataFrame(detail_rows), width="stretch", hide_index=True)
+
     with tab_ai:
         # -------------------------------------------------------------------------
         # PIPELINE DEMAND AI ASSISTANT
@@ -931,33 +1020,34 @@ if selection == "Pipeline Demands":
 # MODULE 2: DST BENCH RESOURCES
 # =============================================================================
 elif selection == "DST Bench Resources":
+    # Bench Days is computed from Last Project Release Date, not read from the CSV
+    bench_age_df = add_bench_age_column(raw_df)
+
     # -------------------------------------------------------------------------
     # KPI STRIP
     # -------------------------------------------------------------------------
     if not raw_df.empty and 'Status' in raw_df.columns:
         # Standardize status for accurate calculation
         status_series = raw_df['Status'].astype(str).str.strip().str.upper()
-        total_bench = int((status_series != 'BILLING STARTED').sum())
+        # Confirmed resources are still sitting on the bench (not yet billing), so they count as active
+        total_bench = len(raw_df)
 
         profile_shared_count = int((status_series == 'PROFILE SHARED').sum())
-        onboarding_billing_count = int(((status_series == 'ONBOARDING STARTED') | (status_series == 'BILLING STARTED')).sum())
+        not_available_count = int((status_series == 'NOT AVAILABLE').sum())
         awaiting_count = int((status_series == 'AWAITING ENGAGEMENT').sum())
 
         # Compute Average Bench Days
-        if 'Bench Days' in raw_df.columns:
-            bench_days_series = pd.to_numeric(raw_df['Bench Days'], errors='coerce').dropna()
-            avg_bench_days = int(round(bench_days_series.mean())) if not bench_days_series.empty else 0
-        else:
-            avg_bench_days = 0
+        bench_days_series = pd.to_numeric(bench_age_df['Bench Days'], errors='coerce').dropna()
+        avg_bench_days = int(round(bench_days_series.mean())) if not bench_days_series.empty else 0
 
         render_kpis([
-            {"label": "Active bench", "value": total_bench, "foot": "Excludes billing started"},
+            {"label": "Active bench", "value": total_bench, "foot": "All resources on the bench"},
             {"label": "Awaiting engagement", "value": awaiting_count, "foot": "Ready for allocation",
              "dot": DST_STATUS_COLORS["Awaiting Engagement"]},
             {"label": "Profile shared", "value": profile_shared_count, "foot": "In client review",
              "dot": DST_STATUS_COLORS["Profile Shared"]},
-            {"label": "Onboarding / billing", "value": onboarding_billing_count, "foot": "Deployment started",
-             "dot": DST_STATUS_COLORS["Onboarding Started"]},
+            {"label": "Not available", "value": not_available_count, "foot": "Cannot be allocated",
+             "dot": DST_STATUS_COLORS["Not Available"]},
             {"label": "Avg bench duration", "value": avg_bench_days, "unit": "days", "foot": "Mean time on bench"},
         ])
 
@@ -989,8 +1079,8 @@ elif selection == "DST Bench Resources":
                     else:
                         st.caption("No valid release dates to chart.")
 
-            if {'Bench Days', 'Name', 'GPN'} <= set(raw_df.columns):
-                fig_aging = bench_aging_chart(raw_df, 'Bench Days', 'Name', 'GPN')
+            if {'Name', 'GPN'} <= set(raw_df.columns):
+                fig_aging = bench_aging_chart(bench_age_df, 'Bench Days', 'Name', 'GPN')
                 if fig_aging is not None:
                     with st.container(border=True, key="card-dst-aging"):
                         card_heading("Bench aging", "Days on bench per resource, longest first")
@@ -1050,13 +1140,9 @@ elif selection == "DST Bench Resources":
         # Apply Active Filters
         display_df = raw_df.copy()
 
-        # Enforce explicit data types across schema
+        # Enforce explicit data types across schema (GPN is alphanumeric for this module, e.g. "VN010140431")
         for col in display_df.columns:
-            if col in ['GPN', 'GUI']:
-                display_df[col] = pd.to_numeric(display_df[col], errors='coerce').astype('Int64')
-            elif col == 'Bench Days':
-                display_df[col] = pd.to_numeric(display_df[col], errors='coerce').fillna(0).astype(int)
-            elif 'Date' in col:
+            if 'Date' in col:
                 display_df[col] = pd.to_datetime(display_df[col], errors='coerce').dt.date
             else:
                 display_df[col] = display_df[col].astype(str)
@@ -1128,24 +1214,22 @@ elif selection == "DST Bench Resources":
             # Setup structured column configuration
             col_config_dst = {}
             for col in display_df.columns:
-                if col in ['GPN', 'GUI']:
-                    col_config_dst[col] = st.column_config.NumberColumn(col, format="%d", min_value=0, step=1)
-                elif col == 'Bench Days':
-                    col_config_dst[col] = st.column_config.NumberColumn(col, format="%d Days" if not edit_mode_dst else "%d", min_value=0, step=1)
+                if col == 'GPN':
+                    col_config_dst[col] = st.column_config.TextColumn(col, help="Alphanumeric resource ID")
                 elif 'Date' in col:
                     col_config_dst[col] = st.column_config.DateColumn(col, format="MM/DD/YYYY")
                 elif col == 'Status':
                     col_config_dst[col] = st.column_config.SelectboxColumn(
                         col,
                         help="DST Bench Resource Status",
-                        options=["Profile Shared", "Onboarding Started", "Billing Started", "Awaiting Engagement"],
+                        options=["Confirmed", "Awaiting Engagement", "Profile Shared", "Not Available"],
                         required=True
                     ) if edit_mode_dst else st.column_config.TextColumn(col)
                 elif col == 'Resource Level' and edit_mode_dst:
                     col_config_dst[col] = st.column_config.SelectboxColumn(
                         col,
                         help="Seniority Level",
-                        options=["Staff 1", "Staff 2", "Senior 1", "Senior 2", "Senior 3", "Manager", "Senior Manager", "Associate Director", "Director"]
+                        options=["Staff 1", "Staff 2", "Staff 3", "Senior 1", "Senior 2", "Senior 3", "Manager", "Senior Manager", "Associate Director", "Director"]
                     )
                 elif col == 'Location' and edit_mode_dst:
                     col_config_dst[col] = st.column_config.SelectboxColumn(
@@ -1167,8 +1251,8 @@ elif selection == "DST Bench Resources":
 
             if edit_mode_dst:
                 st.data_editor(
-                    styled_df_dst, 
-                    width="stretch", 
+                    styled_df_dst,
+                    width="stretch",
                     height=380,
                     num_rows="dynamic",
                     hide_index=True,
@@ -1176,8 +1260,21 @@ elif selection == "DST Bench Resources":
                     column_config=col_config_dst
                 )
             else:
+                # Read mode shows the computed Bench Days column next to Status; it is never editable
+                # or saved back to the CSV - Last Project Release Date is the single source of truth.
+                view_df = display_df.copy()
+                insert_at = view_df.columns.get_loc("Status") + 1 if "Status" in view_df.columns else len(view_df.columns)
+                view_df.insert(insert_at, "Bench Days", bench_age_df.loc[view_df.index, "Bench Days"])
+                col_config_dst["Bench Days"] = st.column_config.NumberColumn(
+                    "Bench Days", format="%d Days", help="Computed as days since Last Project Release Date"
+                )
+
+                styled_view_dst = view_df
+                if 'Status' in view_df.columns:
+                    styled_view_dst = view_df.style.apply(status_cell_style(DST_STATUS_COLORS), axis=1)
+
                 st.dataframe(
-                    styled_df_dst,
+                    styled_view_dst,
                     width="stretch",
                     height=380,
                     hide_index=True,
@@ -1354,11 +1451,9 @@ elif selection == "DST Soon To Bench Resources":
         # Apply Active Filters
         display_df = raw_df.copy()
 
-        # Enforce explicit data types across schema
+        # Enforce explicit data types across schema (GPN / Eng ID are alphanumeric for this module)
         for col in display_df.columns:
-            if col in ['GPN', 'Eng ID']:
-                display_df[col] = pd.to_numeric(display_df[col], errors='coerce').astype('Int64')
-            elif 'Date' in col:
+            if 'Date' in col:
                 display_df[col] = pd.to_datetime(display_df[col], errors='coerce').dt.date
             else:
                 display_df[col] = display_df[col].astype(str).str.strip()
@@ -1426,7 +1521,7 @@ elif selection == "DST Soon To Bench Resources":
             col_config_stb = {}
             for col in display_df.columns:
                 if col in ['GPN', 'Eng ID']:
-                    col_config_stb[col] = st.column_config.NumberColumn(col, format="%d", min_value=0, step=1)
+                    col_config_stb[col] = st.column_config.TextColumn(col, help="Alphanumeric ID")
                 elif 'Date' in col:
                     col_config_stb[col] = st.column_config.DateColumn(col, format="MM/DD/YYYY")
                 elif col == 'Status':
@@ -1436,7 +1531,7 @@ elif selection == "DST Soon To Bench Resources":
                 elif col == 'Level' and edit_mode_stb:
                     col_config_stb[col] = st.column_config.SelectboxColumn(
                         col, help="Seniority Level",
-                        options=with_existing(["Staff 1", "Staff 2", "Senior 1", "Senior 2", "Senior 3", "Manager", "Senior Manager", "Associate Director", "Director"], col)
+                        options=with_existing(["Staff 1", "Staff 2", "Staff 3", "Senior 1", "Senior 2", "Senior 3", "Manager", "Senior Manager", "Associate Director", "Director"], col)
                     )
                 elif col == 'Location' and edit_mode_stb:
                     col_config_stb[col] = st.column_config.SelectboxColumn(
@@ -1641,12 +1736,9 @@ elif selection == "Resource Skillset Matrix":
         # Apply Active Filters
         display_df = raw_df.copy()
 
-        # Enforce explicit data types across schema
+        # Enforce explicit data types across schema (GPN is alphanumeric for this module)
         for col in display_df.columns:
-            if col == 'GPN':
-                display_df[col] = pd.to_numeric(display_df[col], errors='coerce').astype('Int64')
-            else:
-                display_df[col] = display_df[col].astype(str).str.strip()
+            display_df[col] = display_df[col].astype(str).str.strip()
 
         # 1. Global Text Filter
         if search_query_skill and not display_df.empty:
@@ -1705,11 +1797,11 @@ elif selection == "Resource Skillset Matrix":
             col_config_skill = {}
             for col in display_df.columns:
                 if col == 'GPN':
-                    col_config_skill[col] = st.column_config.NumberColumn(col, format="%d", min_value=0, step=1)
+                    col_config_skill[col] = st.column_config.TextColumn(col, help="Alphanumeric resource ID")
                 elif col == 'Resource Level' and edit_mode_skill:
                     col_config_skill[col] = st.column_config.SelectboxColumn(
                         col, help="Seniority Level",
-                        options=["Staff 1", "Staff 2", "Senior 1", "Senior 2", "Senior 3", "Manager", "Senior Manager", "Associate Director", "Director"]
+                        options=["Staff 1", "Staff 2", "Staff 3", "Senior 1", "Senior 2", "Senior 3", "Manager", "Senior Manager", "Associate Director", "Director"]
                     )
                 elif col == 'Location' and edit_mode_skill:
                     col_config_skill[col] = st.column_config.SelectboxColumn(
